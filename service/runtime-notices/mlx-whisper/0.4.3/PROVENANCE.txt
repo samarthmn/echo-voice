@@ -1,0 +1,5 @@
+Status: accepted as MIT by the release owner on 27 September 2026; not a legal signoff
+Source artifact: https://files.pythonhosted.org/packages/22/b7/a35232812a2ccfffcb7614ba96a91338551a660a0e9815cee668bf5743f0/mlx_whisper-0.4.3-py3-none-any.whl
+SHA-256: 6b82b6597a994643a3e5496c7bc229a672e5ca308458455bfe276e76ae024489
+Installed distribution version must match this directory name.
+The wheel METADATA declares License: MIT and contains no license text. https://github.com/ml-explore/mlx-examples is the home page, and the LICENSE file kept beside this note is that repository's default-branch text, not a file from the 0.4.3 wheel. The package directory has no native extension. This is not a legal signoff.

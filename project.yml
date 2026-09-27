@@ -1,0 +1,141 @@
+name: EchoVoice
+configs:
+  Debug: debug
+  Release: release
+  Direct: release
+  AppStore: release
+configFiles:
+  Debug: Resources/Release.xcconfig
+  Release: Resources/Release.xcconfig
+  Direct: Resources/Release.xcconfig
+  AppStore: Resources/Release.xcconfig
+options:
+  bundleIdPrefix: com.samarthmn
+  deploymentTarget:
+    macOS: "14.2"
+  createIntermediateGroups: true
+packages:
+  EchoModules:
+    path: .
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.2"
+    ARCHS: arm64
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+targets:
+  EchoVoice:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/EchoVoice
+      - path: Resources
+        buildPhase: resources
+        excludes: [Info.plist, EchoVoice.entitlements, EchoVoice-AppStore.entitlements, Worker-AppStore.entitlements, Release.xcconfig]
+      - path: service
+        type: folder
+        buildPhase: resources
+        excludes: [tests, "**/__pycache__", .pytest_cache, .mypy_cache, .ruff_cache, .venv, "**/*.pyc", "**/*.pyo"]
+      - path: scripts/bootstrap-runtime.sh
+        buildPhase: resources
+    dependencies:
+      - package: EchoModules
+        product: EchoCore
+      - package: EchoModules
+        product: EchoCapture
+      - package: EchoModules
+        product: EchoIntelligence
+      - package: EchoModules
+        product: EchoRuntime
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.samarthmn.EchoVoice
+        PRODUCT_NAME: Echo Voice
+        INFOPLIST_FILE: Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/EchoVoice.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_DEBUG_DYLIB: NO
+        COMBINE_HIDPI_IMAGES: YES
+      configs:
+        Direct:
+          ECHO_DISTRIBUTION_CHANNEL: direct
+        AppStore:
+          ECHO_DISTRIBUTION_CHANNEL: appStore
+          CODE_SIGN_ENTITLEMENTS: Resources/EchoVoice-AppStore.entitlements
+  EchoBenchmark:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/EchoBenchmark
+    dependencies:
+      - package: EchoModules
+        product: EchoCore
+      - package: EchoModules
+        product: EchoIntelligence
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.samarthmn.EchoBenchmark
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        ENABLE_DEBUG_DYLIB: NO
+  EchoVoiceTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+        excludes: [EchoVoiceUITests]
+      # Exercise the real app models and views without launching the app entry point.
+      - path: Sources/EchoVoice
+        excludes: [EchoVoiceApp.swift]
+    dependencies:
+      - package: EchoModules
+        product: EchoCore
+      - package: EchoModules
+        product: EchoCapture
+      - package: EchoModules
+        product: EchoIntelligence
+      - package: EchoModules
+        product: EchoRuntime
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.samarthmn.EchoVoiceTests
+        GENERATE_INFOPLIST_FILE: YES
+  EchoVoiceUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: Tests/EchoVoiceUITests
+    dependencies:
+      - target: EchoVoice
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.samarthmn.EchoVoiceUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: EchoVoice
+schemes:
+  EchoVoice:
+    build:
+      targets:
+        EchoVoice: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [EchoVoiceTests]
+      environmentVariables:
+        ECHO_TEST_ROOT: "$(PROJECT_DIR)/tmp/tests"
+        ECHO_MODEL_TEST_ROOT: "$(ECHO_MODEL_TEST_ROOT)"
+        ECHO_RUNTIME_TEST_ROOT: "$(ECHO_RUNTIME_TEST_ROOT)"
+        ECHO_OLLAMA_TEST_MODEL: "$(ECHO_OLLAMA_TEST_MODEL)"
+    archive:
+      config: Release
+
+  EchoBenchmark:
+    build:
+      targets:
+        EchoBenchmark: all
+    run:
+      config: Release

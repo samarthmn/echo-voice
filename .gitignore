@@ -1,0 +1,25 @@
+/tmp/
+/private-docs/
+/.build/
+/.swiftpm/
+/build/
+/dist/
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+*.pyc
+.DS_Store
+*.xcuserstate
+xcuserdata/
+
+/reports/model-benchmarks/
+/test-fixtures/
+
+# Public docs are explicitly allowlisted. Private release ledgers and plans stay in private-docs/.
+/docs/*
+!/docs/USER_GUIDE.md
+!/docs/OPERATIONS.md
+!/docs/PRIVACY.md
+!/docs/QUICK_START.txt
+!/docs/THIRD_PARTY.md
+!/docs/screenshots/

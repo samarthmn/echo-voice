@@ -1,0 +1,3 @@
+Source: https://github.com/huggingface/tokenizers/blob/v0.22.2/LICENSE
+Installed distribution version must match this directory name.
+Apache-2.0. The wheel includes the Rust extension. No additional NOTICE file was present in the installed dist-info.

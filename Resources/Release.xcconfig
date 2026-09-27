@@ -1,0 +1,4 @@
+// Version authority shared by all build configurations.
+MARKETING_VERSION = 1.0.0
+CURRENT_PROJECT_VERSION = 1
+ECHO_DISTRIBUTION_CHANNEL = development

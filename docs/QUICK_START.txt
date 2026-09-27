@@ -1,0 +1,31 @@
+Echo Voice 1.0 — local meeting workspace
+
+Installation: copy Echo Voice into Applications. Local qualification builds
+are not notarized public releases; consult the included build status.
+
+Production-channel candidates include speech runtimes. On first launch the
+Setup Guide checks the runtime, helps you download a speech model, offers
+optional notes and speaker grouping, and shows microphone access. Reopen it
+from Help > Setup Guide or the status indicator at the bottom of the sidebar.
+Downloads show progress and continue while you use the app; recording starts
+after a download finishes or is cancelled. Settings > Models manages models
+later. Ollama notes use an already-installed local model; Echo Voice does not
+download or remove Ollama models.
+
+Choose New Meeting > Online meeting or In person. In-person mode records
+only the room microphone. Online mode preserves selected-app and microphone
+tracks separately. Browser capture can include other audible browser tabs.
+Input testing is optional. Acknowledge participants' recording consent.
+
+Stop to finish processing. Replay the transcript, correct text and names,
+save highlights/bookmarks, review notes and export independent copies.
+Speaker labels do not verify identity. Generated text needs review.
+
+Recordings survive local inference failures. Missing models can be installed
+later. Keep Echo Voice open while recording and processing. Use the app to
+delete meetings; do not modify its data directory while it is running.
+
+Source and guidance: https://github.com/samarthmn/echo-voice
+No account, analytics or cloud inference fallback. Model setup needs network
+access; provisioned processing is local. Public release qualification remains
+tracked separately from the existence of this build.

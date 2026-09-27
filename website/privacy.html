@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Echo Voice privacy policy</title>
+<meta name="description" content="Echo Voice stores and processes meeting audio, transcripts and notes on your Mac.">
+<meta name="theme-color" content="#f5f5ef">
+<style>
+:root{color-scheme:light dark;--paper:#f5f5ef;--ink:#20362f;--muted:#55695f;--line:#d6ddd5;--accent:#156853;--surface:#fff}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif}
+a{color:var(--accent)}a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}
+.wrap{max-width:760px;margin:auto;padding:32px 22px 64px}header{display:flex;justify-content:space-between;gap:16px;align-items:center;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.brand{color:inherit;text-decoration:none;font-weight:650}h1{font-size:clamp(32px,5vw,44px);line-height:1.1;letter-spacing:-1px;font-weight:580;margin:28px 0 8px}
+.updated{color:var(--muted);margin:0 0 28px}h2{font-size:20px;margin:28px 0 8px}p{margin:0 0 14px}
+@media(prefers-color-scheme:dark){:root{--paper:#17241f;--ink:#edf2e9;--muted:#b4c4b7;--line:#3c5145;--accent:#91d2b2;--surface:#20352a}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><a class="brand" href="echo-voice.html">Echo Voice</a><a href="support.html">Support</a></header>
+<main>
+<h1>Privacy policy</h1>
+<p class="updated">Updated September 24, 2026. This describes the app’s behavior. Public distribution is still under qualification.</p>
+<h2>What stays on your Mac</h2>
+<p>Echo Voice stores recordings, transcripts, speaker labels, notes, vocabulary and annotations in its local application-data folder. It has no account, analytics, advertising SDK or hosted meeting backend. Inference uses local model files. The speech service binds to authenticated loopback access. Optional Ollama notes connect only to <code>127.0.0.1:11434</code>.</p>
+<h2>Permissions and capture</h2>
+<p>Microphone access is used when you select a microphone and start recording. Online mode also uses system-audio access for the meeting application you select. Browser capture can include other audible tabs in that browser. In-person mode does not request application audio. Echo Voice does not capture screenshots or other visual context. Recording asks you to acknowledge consent. You are responsible for the permission of the other people in the conversation.</p>
+<h2>Network use</h2>
+<p>The app does not upload meeting audio, transcripts or notes. Explicit model setup and updates download files from the hosts shown in Models settings. Those hosts receive ordinary connection information, such as your IP address and the file you requested, and apply their own policies. A gated download uses a token you provide; saving that token in the macOS Keychain is optional. Local inference workers do not receive that token. There is no cloud inference fallback.</p>
+<p>Links to the source repository, model-access pages, support and a future Mac App Store listing open other sites with their own policies. Ollama is an application you install and manage separately. Echo Voice does not install or remove Ollama models.</p>
+<h2>Retention</h2>
+<p>Meetings remain until you delete them. Deletion removes the app-managed meeting, its media and its pending work. Exports and system backups stay under your control. Echo Voice does not encrypt its files separately; your macOS account and FileVault settings apply.</p>
+<h2>Diagnostics</h2>
+<p>A failure can write a local diagnostic log. Read it and remove meeting content before you share it. Do not attach recordings or transcripts to a public issue.</p>
+<p>Questions about this policy go to the address on the <a href="support.html">support page</a>. That address is a placeholder until publication.</p>
+</main>
+</div>
+</body>
+</html>

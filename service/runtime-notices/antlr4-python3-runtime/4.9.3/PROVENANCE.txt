@@ -1,0 +1,3 @@
+Source: https://github.com/antlr/antlr4/blob/4.9.3/LICENSE.txt
+Installed distribution version must match this directory name.
+BSD-3-Clause. Pure Python runtime; no bundled native library in this wheel.

@@ -1,0 +1,3 @@
+Source: https://github.com/google/flatbuffers/blob/v25.12.19/LICENSE
+Installed distribution version must match this directory name.
+Apache-2.0. Python package has no native extension in this install.

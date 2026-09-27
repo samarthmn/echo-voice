@@ -1,0 +1,5 @@
+Status: accepted as MIT by the release owner on 27 September 2026; not a legal signoff
+Source artifact: https://files.pythonhosted.org/packages/35/77/0cfa1b4697cfb5336f3a96e8bc73327f64610be3a64c97275f1801afb395/primePy-1.3.tar.gz
+SHA-256: 25fd7e25344b0789a5984c75d89f054fcf1f180bef20c998e4befbac92de4669
+Installed distribution version must match this directory name.
+The 1.3 sdist and wheel contain no LICENSE file. PKG-INFO says License: UNKNOWN. setup.py classifiers include MIT. https://github.com/janaindrajit/primePy has no tags, so the default-branch LICENSE text kept beside this file is not a 1.3 release artifact. No native extension. This is not a legal signoff.
