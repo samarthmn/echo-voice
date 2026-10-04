@@ -160,10 +160,15 @@ final class RegenerationFinalizationTests: XCTestCase {
         try store.saveVersionWindow(versionID: version.id, windowID: segment.windowID, segments: [segment])
         version.status = .ready; try store.saveTranscriptVersion(version); try store.activateTranscriptVersion(version.id, meetingID: "test")
         let processor = MeetingProcessor(store: store, paths: fixture.paths, service: LocalService(paths: fixture.paths), intelligence: LocalIntelligence(modelsURL: fixture.paths.modelsURL))
-        try await processor.finalize(meetingID: "test", onUpdate: { _ in })
+        do {
+            try await processor.finalize(meetingID: "test", onUpdate: { _ in })
+            XCTFail("Missing notes model must report an incomplete stage")
+        } catch let error as MeetingProcessingError {
+            guard case .stagesFailed = error else { throw error }
+        }
         XCTAssertEqual(try store.segments(meetingID: "test"), [segment])
         XCTAssertTrue(try store.jobs(meetingID: "test").filter { $0.kind == .transcribe }.isEmpty)
-        XCTAssertEqual(try store.meeting(id: "test")?.state, .ready)
+        XCTAssertEqual(try store.meeting(id: "test")?.state, .failed)
         XCTAssertTrue(try store.jobs(meetingID: "test").contains { $0.kind == .notes && $0.status == .failed })
     }
 }

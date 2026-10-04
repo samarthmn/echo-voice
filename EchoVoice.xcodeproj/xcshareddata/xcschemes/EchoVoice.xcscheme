@@ -74,6 +74,11 @@
             value = "$(PROJECT_DIR)/tmp/tests"
             isEnabled = "YES">
          </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "ECHO_UI_PREVIEW_ROOT"
+            value = "$(ECHO_UI_PREVIEW_ROOT)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
       </EnvironmentVariables>
    </TestAction>
    <LaunchAction

@@ -54,13 +54,13 @@ private struct EchoMenuView: View {
     @ObservedObject var recordingSession: RecordingSessionModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Text(model.isRecording ? "Recording · \(AppModel.timestamp(model.elapsed))" : "Echo Voice · On this Mac")
-        if !model.isRecording { Text("Status: " + model.readiness.overall.title) }
+        Text(model.isRecording ? "Recording · \(AppModel.timestamp(recordingSession.elapsed))" : "Echo Voice · On this Mac")
+        if !model.isRecording { Text(model.readiness.overall.title) }
         if model.isRecording {
             if model.liveTranscriptionPolicy?.admitsLiveRecognition == true {
                 Button("Stop live transcription") { Task { await model.stopLiveTranscription() } }
             } else if model.liveTranscriptionPolicy?.enabledAtStart == true {
-                Text("Remaining transcript after meeting")
+                Text("Transcript after recording")
             } else {
                 Text("Transcript after meeting")
             }
@@ -89,6 +89,15 @@ private struct EchoMenuView: View {
 
 final class EchoAppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { sender.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil) }
+        return true
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         guard !model.changingRecording, !model.importingLibrary else { return .terminateCancel }

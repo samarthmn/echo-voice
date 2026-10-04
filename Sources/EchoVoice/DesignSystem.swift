@@ -83,8 +83,8 @@ extension SetupReadiness.Overall {
     var title: String {
         switch self {
         case .checking: "Checking setup…"
-        case .ready: "Ready to record"
-        case .setupRequired: "Setup required"
+        case .ready: "Ready to transcribe"
+        case .setupRequired: "Transcription needs setup"
         case .permissionNeeded: "Microphone access needed"
         case .downloading(let fraction): fraction.map { "Downloading \(Int(($0 * 100).rounded()))%" } ?? "Downloading…"
         case .attention: "Library needs attention"
@@ -213,10 +213,18 @@ struct DownloadProgressRow: View {
 struct DownloadQueueView: View {
     @EnvironmentObject private var model: AppModel
     var body: some View {
-        if model.activeDownload != nil || !model.queuedDownloads.isEmpty {
+        if model.activeDownload != nil || !model.queuedDownloads.isEmpty || !model.stagedDownloads.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.m) {
                 if let active = model.activeDownload { DownloadProgressRow(download: active) { model.cancelDownload(active.id) } }
                 ForEach(model.queuedDownloads) { item in DownloadProgressRow(download: item, queued: true) { model.removeQueuedDownload(item.id) } }
+                ForEach(model.stagedDownloads) { item in
+                    HStack {
+                        Label(model.catalog?.model(item.id)?.displayName ?? item.id, systemImage: "checkmark.circle")
+                        Spacer()
+                        Button("Activate") { model.activateStagedDownloads() }.disabled(!model.modelChangesAllowed)
+                    }
+                    Text("Downloaded. Activation waits for recording and processing to finish.").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
     }

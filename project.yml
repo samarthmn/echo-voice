@@ -110,11 +110,14 @@ targets:
       - path: Tests/EchoVoiceUITests
     dependencies:
       - target: EchoVoice
+      - package: EchoModules
+        product: EchoCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.samarthmn.EchoVoiceUITests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: EchoVoice
+        ENABLE_HARDENED_RUNTIME: NO
 schemes:
   EchoVoice:
     build:
@@ -130,6 +133,7 @@ schemes:
         ECHO_MODEL_TEST_ROOT: "$(ECHO_MODEL_TEST_ROOT)"
         ECHO_RUNTIME_TEST_ROOT: "$(ECHO_RUNTIME_TEST_ROOT)"
         ECHO_OLLAMA_TEST_MODEL: "$(ECHO_OLLAMA_TEST_MODEL)"
+        ECHO_UI_PREVIEW_ROOT: "$(ECHO_UI_PREVIEW_ROOT)"
     archive:
       config: Release
 
@@ -139,3 +143,13 @@ schemes:
         EchoBenchmark: all
     run:
       config: Release
+
+  EchoVoiceUI:
+    build:
+      targets:
+        EchoVoice: all
+    test:
+      config: Debug
+      targets: [EchoVoiceUITests]
+      environmentVariables:
+        ECHO_TEST_ROOT: "$(PROJECT_DIR)/tmp/tests"

@@ -3,6 +3,7 @@ import EchoCore
 
 struct RecordingInputsView: View {
     @EnvironmentObject private var model: AppModel
+    let meetingID: String
     @Environment(\.dismiss) private var dismiss
     @State private var microphoneUID = ""
     @State private var applicationID = ""
@@ -14,7 +15,7 @@ struct RecordingInputsView: View {
             HStack {
                 Text("Recording inputs").font(.title2.bold())
                 Spacer()
-                Button("Done") { dismiss() }
+                Button("Done") { dismiss() }.disabled(working)
             }
             Text("Choose an input explicitly when a device or meeting application changes. The other available track keeps recording.")
                 .font(.callout).foregroundStyle(.secondary)
@@ -27,7 +28,7 @@ struct RecordingInputsView: View {
                     working = true
                     Task { await model.changeMicrophone(uid: microphoneUID); working = false }
                 }.disabled(working || microphoneUID.isEmpty)
-                if model.selectedMeeting?.recordingMode == .online {
+                if model.meetings.first(where: { $0.id == meetingID })?.recordingMode == .online {
                     Picker("Meeting application", selection: $applicationID) {
                         Text("Choose an application").tag("")
                         ForEach(model.sources) { source in Text(source.name).tag(source.id) }
@@ -55,6 +56,11 @@ struct RecordingInputsView: View {
         }
         .padding(24)
         .frame(width: 540)
+        .disabled(model.recordingID != meetingID)
+        .interactiveDismissDisabled(working)
+        .alert("Input change failed", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
+            Button("OK") { model.error = nil }
+        } message: { Text(model.error ?? "") }
         .onAppear {
             model.refreshSources()
             microphoneUID = model.recordingMicrophoneUID ?? ""

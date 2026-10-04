@@ -10,11 +10,9 @@ private struct TranscriptAvailabilityView<Content: View>: View {
 struct MeetingDetailView: View {
     @EnvironmentObject var model: AppModel
     let meeting: Meeting
-    @ObservedObject var recordingSession: RecordingSessionModel
-    @ObservedObject var playbackModel: PlaybackModel
+    let playbackModel: PlaybackModel
     @Environment(\.openSettings) private var openSettings
     @State private var showRegenerate = false
-    @State private var showSavedMoments = false
     @State private var showSpeakerReview = false
     @State private var regenerateModel = SpeechRecognitionModel.parakeet
     @State private var useVocabulary = true
@@ -27,138 +25,22 @@ struct MeetingDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: Theme.Space.l) {
-                if model.pendingMeetingDeletions.contains(meeting.id) {
-                    Banner(message: "This meeting has a deletion that needs recovery. Other meetings are available.", systemImage: "trash", tone: .attention) {
-                        Button("Retry deletion recovery") { model.retryMeetingDeletions() }
-                    }
-                } else if model.recoveringAssetMeetings.contains(meeting.id) {
-                    Banner(message: "Checking saved audio for this meeting…", systemImage: "externaldrive") {
-                        ProgressView().controlSize(.small)
-                    }
-                } else if model.damagedAssetMeetings.contains(meeting.id) {
-                    Banner(message: "Saved audio needs repair. This meeting is protected from recording and file changes until recovery succeeds.", systemImage: "externaldrive.badge.exclamationmark", tone: .attention) {
-                        Button("Retry audio recovery") { model.retryAssetRecovery(meetingID: meeting.id) }
-                    }
-                }
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: Theme.Space.s) {
-                        HStack {
-                            Text(meeting.title).font(Theme.Font.pageTitle).textSelection(.enabled)
-                            Button { title = meeting.title; editingTitle = true } label: { Image(systemName: "pencil").font(.caption) }.buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Rename meeting").help("Rename meeting")
-                        }
-                        HStack(spacing: Theme.Space.m) {
-                            Text(meeting.startedAt, format: .dateTime.month(.wide).day().hour().minute())
-                            if let ended = meeting.endedAt { Text("·"); Text(AppModel.duration(ended.timeIntervalSince(meeting.startedAt))) }
-                            Text("·")
-                            Label(meeting.sourceName, systemImage: meeting.recordingMode == .inPerson ? "person.2" : "video")
-                            StatusBadge(text: meeting.state.displayLabel, tone: meeting.state.tone)
-                        }.font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if !isCurrent { processButton }
-                }
-                if isCurrent { recordingControls }
-                else if model.pendingRedactionMeetings.contains(meeting.id) {
-                    Banner(message: "A passage deletion is being recovered. Playback, export, and processing for this meeting are paused.", systemImage: "trash", tone: .attention) {
-                        Button("Retry deletion") { model.retryPendingRedactions() }.disabled(model.redactionBusy)
-                    }
-                }
-                else if meeting.state == .interrupted {
-                    Banner(message: "Recording interrupted. Saved audio is available.", systemImage: "arrow.clockwise.circle") {
-                        Button("Resume…") { model.showNewMeeting = true }.disabled(model.newMeetingBlockedReason != nil).help(model.newMeetingBlockedReason ?? "Continue recording into this meeting")
-                        Button("Finalize") { model.processMeeting(meeting.id) }.disabled(processDisabledReason != nil).help(processDisabledReason ?? "Process the saved audio")
-                    }
-                }
-                if model.processingID == meeting.id || isCurrent {
-                    HStack(spacing: Theme.Space.s) {
-                        if model.processingID == meeting.id { ProgressView().controlSize(.small) }
-                        Text(model.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        Spacer()
-                        let queued = model.jobStatus?.queuedCount ?? 0
-                        if queued > 0 { StatusBadge(text: "\(queued) queued", tone: .progress) }
-                    }
-                }
-                if !isCurrent, model.jobStatus?.failedDiarization == true {
-                    Banner(message: model.health?.capabilities.diarize == true ? "Speaker grouping needs attention." : "Speaker grouping needs setup.", systemImage: "person.2.badge.gearshape") {
-                        if model.health?.capabilities.diarize == true {
-                            Button("Retry in 30-minute sections") { model.processMeeting(meeting.id, windowedSpeakers: true) }
-                                .disabled(processDisabledReason != nil)
-                                .help(processDisabledReason ?? "Speaker labels apply only within each section; the same label in different sections is not the same person.")
-                        } else {
-                            Button("Set Up Speaker Grouping") { openModels(.speakers) }
-                        }
-                    }
-                }
-                if !isCurrent, let reason = model.jobStatus?.firstFailure {
-                    Banner(message: reason, systemImage: "exclamationmark.triangle", tone: .attention).textSelection(.enabled)
-                }
-                if !isCurrent {
-                    HStack {
-                        if model.groupingRuns.contains(where: { $0.transcriptVersionID == model.activeTranscriptID }) {
-                            Button("Review speakers") { showSpeakerReview = true }
-                        } else {
-                            Menu("Group speakers for review") {
-                                ForEach(model.availableSpeakerModels, id: \.id) { descriptor in
-                                    Button(descriptor.displayName) { model.groupSpeakersForReview(modelID: descriptor.id) }
-                                        .disabled(model.health?.models[descriptor.id]?.ready != true)
-                                }
-                                Divider()
-                                Button("Set Up Speaker Grouping…") { openModels(.speakers) }
-                            }
-                                .disabled(model.processingID != nil)
-                        }
-                        Button("Regenerate transcript…") { showRegenerate = true }.disabled(!model.modelChangesAllowed)
-                        Menu("Transcript history") {
-                            ForEach(model.transcriptVersions.filter { $0.status == .ready }) { version in
-                                Button(version.createdAt.formatted() + " · " + (model.catalog?.model(version.configuration?.speech.id ?? "")?.displayName ?? "Original")) { model.activateTranscript(version.id) }
-                            }
-                        }.disabled(model.playing || model.processingID != nil)
-                        if let version = model.readyTranscriptID { Button("Use new transcript") { model.activateTranscript(version) }.disabled(model.playing || model.processingID != nil) }
-                    }.font(.caption)
-                }
-                ModelSummaryView(title: isCurrent ? "Models selected for this meeting" : "Meeting models", configuration: displayConfiguration, usedRoles: usedModelRoles, actualNotes: displayedNotes?.model, actualSpeakers: displayedGrouping?.model, historical: !isCurrent)
-                Picker("Review", selection: $model.selectedTab) {
-                    Label("Transcript", systemImage: "waveform").tag("Transcript")
-                    Label("Notes", systemImage: "note.text").tag("Notes")
-                }.pickerStyle(.segmented).frame(maxWidth: 420)
-            }.padding(Theme.Space.xl)
+            header
+            meetingStatus
             Divider()
-            if model.selectedTab == "Transcript" {
-                transcript.allowsHitTesting(!model.pendingRedactionMeetings.contains(meeting.id) && !model.redactionBusy)
-            } else if model.selectedTab == "Notes" {
-                notes.allowsHitTesting(!model.pendingRedactionMeetings.contains(meeting.id) && !model.redactionBusy)
-            } else { notes }
-            Divider()
-            HStack(spacing: 14) {
-                Button { if model.playing { model.stopPlayback() } else { model.play(at: model.playbackTime, track: playbackTrack) } } label: { Image(systemName: model.playing ? "pause.fill" : "play.fill") }.buttonStyle(.bordered).accessibilityLabel(model.playing ? "Pause playback" : "Play saved audio")
-                Button { model.play(at: max(0, model.playbackTime - 5), track: playbackTrack) } label: { Image(systemName: "gobackward.5") }.accessibilityLabel("Back five seconds")
-                Text(AppModel.timestamp(model.playbackTime)).font(.callout.monospacedDigit())
-                VStack(spacing: 0) {
-                    Slider(value: Binding(get: { model.playbackTime }, set: { model.play(at: $0, track: playbackTrack) }), in: 0...max(1, meeting.endedAt?.timeIntervalSince(meeting.startedAt) ?? 1)).accessibilityLabel("Playback position")
-                    GeometryReader { geometry in
-                        ForEach(model.annotations.filter { $0.kind == .bookmark }) { item in
-                            Button { model.play(at: item.startTime, track: item.track) } label: { Image(systemName: "bookmark.fill").font(.system(size: 8)) }
-                                .buttonStyle(.plain).help(item.label ?? AppModel.timestamp(item.startTime))
-                                .accessibilityLabel("Bookmark at " + AppModel.timestamp(item.startTime))
-                                .offset(x: max(0, min(geometry.size.width - 8, geometry.size.width * item.startTime / max(1, meeting.endedAt?.timeIntervalSince(meeting.startedAt) ?? 1))))
-                        }
-                    }.frame(height: 9)
-                }
-                Button { model.play(at: model.playbackTime + 5, track: playbackTrack) } label: { Image(systemName: "goforward.5") }.accessibilityLabel("Forward five seconds")
-                Picker("Speed", selection: $model.playbackRate) { ForEach([Float(0.75), 1, 1.25, 1.5, 2], id: \.self) { Text(String(format: "%g×", $0)).tag($0) } }.labelsHidden().frame(width: 70)
-                Button { model.bookmark() } label: { Image(systemName: "bookmark") }.accessibilityLabel("Bookmark this moment")
-                Picker("Track", selection: $playbackTrack) {
-                    Text("Conversation").tag(AudioTrack?.none)
-                    if model.availableTracks.contains(.remote) { Text("Meeting audio").tag(Optional(AudioTrack.remote)) }
-                    if model.availableTracks.contains(.microphone) { Text(meeting.recordingMode.microphoneLabel).tag(Optional(AudioTrack.microphone)) }
-                    if model.availableTracks.contains(.cleanMicrophone) { Text("Cleaned microphone").tag(Optional(AudioTrack.cleanMicrophone)) }
-                }.labelsHidden().frame(width: 155).onChange(of: playbackTrack) { _, _ in model.stopPlayback(); model.play(at: model.playbackTime, track: playbackTrack) }
-                Spacer()
-                if !model.gaps.isEmpty { Label("\(model.gaps.count) timeline gaps", systemImage: "waveform.slash").font(.caption).foregroundStyle(.secondary).help(model.gaps.map { "\(AppModel.timestamp($0.startTime)) · \($0.reason)" }.joined(separator: "\n")) }
-                Label("Stored locally", systemImage: "internaldrive").font(.caption).foregroundStyle(.secondary)
-            }.padding(.horizontal, 16).padding(.vertical, 12)
-                .disabled(model.isRecording || model.redactionBusy || model.pendingRedactionMeetings.contains(meeting.id))
+            Group {
+                if model.selectedTab == .transcript { transcript }
+                else { notes }
+            }
+            .allowsHitTesting(!model.pendingRedactionMeetings.contains(meeting.id) && !model.redactionBusy)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !isCurrent {
+                Divider()
+                PlaybackBar(meeting: meeting, playback: playbackModel, track: $playbackTrack)
+            }
+        }
+        .inspector(isPresented: Binding(get: { model.workspace.inspectorVisible }, set: { model.workspace.inspectorVisible = $0 })) {
+            inspector.inspectorColumnWidth(min: 270, ideal: 300, max: 360)
         }
         .sheet(isPresented: $showRegenerate) {
             let ready = model.isModelReady(regenerateModel.assetKey)
@@ -177,20 +59,19 @@ struct MeetingDetailView: View {
                 HStack {
                     Button("Cancel") { showRegenerate = false }.keyboardShortcut(.cancelAction)
                     Spacer()
-                    Button("Regenerate") { model.regenerateTranscript(speech: regenerateModel, useVocabulary: useVocabulary); showRegenerate = false }
+                    Button("Regenerate") { model.regenerateTranscript(speech: regenerateModel, useVocabulary: useVocabulary, meetingID: meeting.id); showRegenerate = false }
                         .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!ready)
                 }
             }.padding(Theme.Space.xl).frame(width: 480)
             .onAppear { regenerateModel = readyRegenerationModel }
         }
         .sheet(item: $editingNotes) { NotesEditorView(draft: $0).environmentObject(model) }
-        .sheet(isPresented: $model.showInputsPanel) { RecordingInputsView().environmentObject(model) }
         .sheet(isPresented: $showSpeakerReview, onDismiss: { model.stopPlayback() }) {
             if let run = model.groupingRuns.first(where: { $0.transcriptVersionID == model.activeTranscriptID }) {
                 SpeakerReviewView(run: run, playbackModel: playbackModel).environmentObject(model)
             }
         }
-        .alert("Rename meeting", isPresented: $editingTitle) { TextField("Title", text: $title); Button("Cancel", role: .cancel) {}; Button("Save") { model.renameMeeting(title) } }
+        .alert("Rename meeting", isPresented: $editingTitle) { TextField("Title", text: $title); Button("Cancel", role: .cancel) {}; Button("Save") { model.renameMeeting(title, meetingID: meeting.id) } }
         .onChange(of: meeting.id) { _, _ in notesVersionID = nil; playbackTrack = nil }
         .background(ReplayEventMonitor(onScroll: { model.followPlayback = false }, onSpace: {
             guard !model.isRecording else { return }
@@ -198,10 +79,120 @@ struct MeetingDetailView: View {
         }))
     }
 
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(meeting.title).font(.title2.weight(.semibold)).lineLimit(2)
+                        Button { title = meeting.title; editingTitle = true } label: { Image(systemName: "pencil") }
+                            .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Rename meeting")
+                    }
+                    Text(meeting.startedAt.formatted(date: .abbreviated, time: .shortened) + " · " + meeting.sourceName)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                StatusBadge(text: meeting.state.displayLabel, tone: meeting.state.tone)
+            }
+            HStack {
+                Picker("Review", selection: $model.selectedTab) {
+                    ForEach(ReviewTab.allCases) { tab in Text(tab.rawValue).tag(tab) }
+                }.pickerStyle(.segmented).frame(width: 230).accessibilityIdentifier("review-tabs")
+                Spacer()
+                if !isCurrent {
+                    Menu("Review Tools") {
+                        Button("Review Speakers…") { showSpeakerReview = true }
+                            .disabled(displayedGrouping == nil)
+                        Menu("Group Speakers") {
+                            ForEach(model.availableSpeakerModels) { descriptor in
+                                Button(descriptor.displayName) { model.groupSpeakersForReview(modelID: descriptor.id) }
+                                    .disabled(!model.isModelReady(descriptor.id) || !model.modelChangesAllowed)
+                            }
+                            Button("Set Up Speaker Grouping…") { openModels(.speakers) }
+                        }
+                        Button("Regenerate Transcript…") { showRegenerate = true }.disabled(!model.modelChangesAllowed)
+                        Button("Retry Unfinished Processing") { model.processMeeting(meeting.id) }
+                            .disabled(processDisabledReason != nil)
+                        Button("Meeting Details") { model.workspace.inspectorVisible = true }
+                    }.fixedSize()
+                }
+            }
+        }.padding(20)
+    }
+
+    @ViewBuilder private var meetingStatus: some View {
+        if model.pendingMeetingDeletions.contains(meeting.id) {
+            Banner(message: "Meeting deletion needs recovery.", tone: .attention) {
+                Button("Retry") { model.retryMeetingDeletions() }
+            }.padding([.horizontal, .bottom], 16)
+        } else if model.damagedAssetMeetings.contains(meeting.id) {
+            Banner(message: "Saved audio needs repair.", tone: .attention) {
+                Button("Repair Audio") { model.retryAssetRecovery(meetingID: meeting.id) }
+            }.padding([.horizontal, .bottom], 16)
+        } else if model.pendingRedactionMeetings.contains(meeting.id) {
+            Banner(message: "Passage deletion needs recovery. Playback and export are paused.", tone: .attention) {
+                Button("Retry") { model.retryPendingRedactions() }.disabled(model.redactionBusy)
+            }.padding([.horizontal, .bottom], 16)
+        } else if meeting.state == .interrupted {
+            Banner(message: "Recording was interrupted. Saved audio is retained.", tone: .attention) {
+                Button("Resume…") { model.resumeMeeting(meeting.id) }.disabled(model.newMeetingBlockedReason != nil)
+                Button("Process Audio") { model.processMeeting(meeting.id) }.disabled(processDisabledReason != nil)
+            }.padding([.horizontal, .bottom], 16)
+        } else if let event = model.processingEvents[meeting.id], event.stage != .ready {
+            HStack(spacing: 8) {
+                if model.processingID == meeting.id { ProgressView().controlSize(.small) }
+                Text(event.message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Spacer()
+                if event.stage == .needsAttention { Button("Retry") { model.processMeeting(meeting.id) }.controlSize(.small) }
+            }.padding([.horizontal, .bottom], 16)
+        }
+    }
+
+    private var inspector: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Meeting Details").font(.headline)
+                ModelSummaryView(title: "Models", configuration: displayConfiguration, usedRoles: usedModelRoles,
+                                 actualNotes: displayedNotes?.model, actualSpeakers: displayedGrouping?.model, historical: !isCurrent)
+                Divider()
+                Text("Processing").font(.headline)
+                if let failure = model.jobStatus?.firstFailure { Text(failure).font(.callout).foregroundStyle(.secondary).textSelection(.enabled) }
+                if model.recoveringAssetMeetings.contains(meeting.id) { Label("Checking saved audio…", systemImage: "externaldrive") }
+                if !isCurrent { processButton }
+                if model.jobStatus?.failedDiarization == true {
+                    Button("Retry Speakers in 30-minute Sections") { model.processMeeting(meeting.id, windowedSpeakers: true) }
+                        .disabled(processDisabledReason != nil)
+                    Text("Speaker labels apply within each section.").font(.caption).foregroundStyle(.secondary)
+                }
+                Divider()
+                Text("Transcript History").font(.headline)
+                ForEach(model.transcriptVersions.filter { $0.status == .ready }) { version in
+                    Button {
+                        model.activateTranscript(version.id, meetingID: meeting.id)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(version.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                Text(model.catalog?.model(version.configuration?.speech.id ?? "")?.displayName ?? "Original").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if version.id == model.activeTranscriptID { Image(systemName: "checkmark") }
+                        }
+                    }.buttonStyle(.plain).disabled(model.playing || model.isRecording || model.processingID != nil)
+                }
+                if let id = model.readyTranscriptID {
+                    Button("Use New Transcript") { model.activateTranscript(id, meetingID: meeting.id) }
+                        .disabled(model.playing || model.processingID != nil || model.isRecording)
+                }
+                Divider()
+                SavedMomentsView()
+            }.padding(16)
+        }
+    }
+
     private var speechReady: Bool { model.health?.canTranscribe(meeting.recognitionModel) == true }
     private var processDisabledReason: String? {
-        if model.isRecording { return "Processing starts after the current recording stops." }
-        if model.processingID != nil { return model.processingID == meeting.id ? "This meeting is processing." : "Another meeting is processing." }
+        if model.processingID == meeting.id { return "This meeting is processing." }
         if model.setupBusy { return "Processing is available when the current download or setup finishes." }
         return nil
     }
@@ -241,33 +232,6 @@ struct MeetingDetailView: View {
         return "Native · " + (model.catalog?.model(selection.id)?.displayName ?? selection.id)
     }
 
-    private var recordingControls: some View {
-        HStack(spacing: 18) {
-            Circle().fill(model.isPaused ? .orange : .red).frame(width: 9, height: 9)
-            Text(AppModel.timestamp(model.elapsed)).font(.title3.monospacedDigit())
-            LevelMeter(name: meeting.recordingMode.microphoneLabel, level: model.microphoneLevel)
-            if meeting.recordingMode == .online { LevelMeter(name: model.waitingForRemoteAudio ? "Meeting · waiting" : "Meeting", level: model.remoteLevel) }
-            Spacer()
-            if model.liveTranscriptionPolicy?.admitsLiveRecognition == true {
-                Button("Stop live transcription") { Task { await model.stopLiveTranscription() } }
-                    .help("Keep recording audio; transcribe the remaining speech after the meeting")
-            } else if model.liveTranscriptionPolicy?.enabledAtStart == true {
-                Text("Remaining transcript after meeting").font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("Transcript after meeting").font(.caption).foregroundStyle(.secondary)
-            }
-            Button { Task { await model.setMicrophoneMuted(!model.microphoneMuted) } } label: {
-                Image(systemName: model.microphoneMuted ? "mic.slash.fill" : "mic.fill")
-            }.help(model.microphoneMuted ? "Unmute microphone in Echo Voice" : "Mute microphone in Echo Voice")
-                .accessibilityLabel(model.microphoneMuted ? "Unmute microphone" : "Mute microphone")
-            Button("Inputs…") { model.refreshSources(); model.showInputsPanel = true }
-            Button { Task { await model.togglePause() } } label: { Image(systemName: model.isPaused ? "play.fill" : "pause.fill") }.help(model.isPaused ? "Resume" : "Pause").accessibilityLabel(model.isPaused ? "Resume recording" : "Pause recording")
-            Button("Stop") { Task { await model.stopRecording() } }.buttonStyle(.borderedProminent).tint(.red).accessibilityLabel("Stop recording")
-        }.padding(Theme.Space.l)
-            .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.l))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.l).strokeBorder((model.isPaused ? Color.orange : Color.red).opacity(0.35)))
-    }
-
     private var transcript: some View {
         Group {
             if let list = model.transcriptList {
@@ -299,8 +263,7 @@ struct MeetingDetailView: View {
                             Toggle("Show only highlights", isOn: $model.showOnlyHighlights).toggleStyle(.switch).controlSize(.small)
                             Spacer()
                             if !model.followPlayback { Button("Follow playback") { model.followPlayback = true } }
-                            Button("Saved moments") { showSavedMoments = true }
-                                .popover(isPresented: $showSavedMoments) { SavedMomentsView().environmentObject(model) }
+                            Button("Saved moments") { model.workspace.inspectorVisible = true }
                         }.padding(.horizontal, 16)
                         if model.showOnlyHighlights && model.playing && !model.annotations.contains(where: { $0.kind == .highlight && model.playbackTime >= $0.startTime && model.playbackTime < ($0.endTime ?? $0.startTime) }) {
                             HStack { Text("Playing outside saved highlights"); Button("Show full transcript") { model.showOnlyHighlights = false } }.font(.caption)
@@ -308,12 +271,14 @@ struct MeetingDetailView: View {
                         TranscriptTableView(list: list, model: model, playbackModel: playbackModel, highlightsOnly: model.showOnlyHighlights,
                                             highlightedIDs: Set(model.annotations.filter { $0.kind == .highlight }.compactMap(\.segmentID)),
                                             activePassageID: activePassageID)
+                            .frame(minHeight: 0, maxHeight: .infinity)
                         if !model.gaps.isEmpty {
                             ScrollView(.horizontal) {
                                 HStack { ForEach(model.gaps) { gap in Label("\(AppModel.timestamp(gap.startTime)) · \(gap.reason)", systemImage: "waveform.slash").font(.caption).foregroundStyle(.orange) } }
                             }.frame(height: 28).padding(.horizontal, 16)
                         }
                     }.padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -344,6 +309,7 @@ struct MeetingDetailView: View {
                         if model.notes.count > 1 { Text("\(model.notes.count) versions retained. Regeneration preserves earlier drafts and your edits.").font(.caption).foregroundStyle(.secondary) }
                     }.padding(28)
                 }
+                .frame(minHeight: 0, maxHeight: .infinity)
             } else if model.defaultNotesSelection() == nil && meeting.state == .ready {
                 EmptyStateView(title: "Meeting notes are off", systemImage: "note.text", message: "Turn on a notes model to draft summaries, decisions, and action items linked to the transcript.") {
                     Button("Set Up Notes") { openModels(.notes) }
@@ -386,6 +352,7 @@ struct TranscriptRow: View {
     @State private var text = ""
     @State private var renaming = false
     @State private var speakerName = ""
+    @State private var editingVersionID = ""
     @State private var selectedRange = NSRange(location: 0, length: 0)
     private var speaker: Speaker? { model.speakers.first { $0.id == segment.speakerID } }
     var body: some View {
@@ -442,11 +409,12 @@ struct TranscriptRow: View {
             }
         }.padding(Theme.Space.m).background(model.playing && model.isAudible(segment.track) && model.playbackTime >= segment.startTime && model.playbackTime < segment.endTime ? Theme.accent.opacity(0.14) : Theme.subtleFill, in: RoundedRectangle(cornerRadius: Theme.Radius.m))
             .contextMenu { Button("Bookmark passage") { model.bookmark(at: segment.startTime) }; Button("Highlight passage") { model.highlight(segment, range: NSRange(location: 0, length: (segment.text as NSString).length)) }; if speaker != nil { Button("Rename Speaker") { speakerName = speaker?.label ?? ""; renaming = true } } }
+            .onChange(of: editing) { _, visible in if visible { editingVersionID = model.activeTranscriptID } }
             .sheet(isPresented: $editing) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Correct transcript").font(.headline)
                     TextEditor(text: $text).frame(width: 480, height: 160)
-                    HStack { Button("Cancel") { editing = false }; Spacer(); Button("Save") { model.editSegment(segment, text: text); editing = false }.buttonStyle(.borderedProminent) }
+                    HStack { Button("Cancel") { editing = false }; Spacer(); Button("Save") { model.editSegment(segment, text: text, versionID: editingVersionID); editing = false }.buttonStyle(.borderedProminent) }
                 }.padding(24)
             }
             .alert("Rename speaker", isPresented: $renaming) { TextField("Display name", text: $speakerName); Button("Cancel", role: .cancel) {}; Button("Save") { if let speaker { model.renameSpeaker(speaker, label: speakerName) } } } message: { Text("This is a display label, not a verified identity.") }
@@ -519,7 +487,7 @@ private struct SavedMomentsView: View {
                     }
                 }
             }
-        }.padding(16).frame(width: 380, height: 300)
+        }.frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
         .alert("Saved moment label", isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
             TextField("Label", text: $label)
             Button("Cancel", role: .cancel) { editing = nil }

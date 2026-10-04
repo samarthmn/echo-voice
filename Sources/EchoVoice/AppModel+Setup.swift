@@ -2,6 +2,11 @@ import Foundation
 import EchoCore
 import EchoRuntime
 
+struct StagedModelDownload: Codable, Identifiable, Equatable {
+    let id: String
+    let makeDefault: Bool
+}
+
 struct ModelDownload: Identifiable, Equatable {
     let id: String
     let name: String
@@ -49,20 +54,18 @@ extension AppModel {
     }
 
     func isModelReady(_ id: String) -> Bool { health?.models[id]?.ready == true }
-    func isDownloading(_ id: String) -> Bool { activeDownload?.id == id || queuedDownloads.contains { $0.id == id } }
+    func isDownloading(_ id: String) -> Bool { activeDownload?.id == id || queuedDownloads.contains { $0.id == id } || stagedDownloads.contains { $0.id == id } }
     func download(for id: String) -> ModelDownload? { activeDownload?.id == id ? activeDownload : queuedDownloads.first { $0.id == id } }
 
-    /// Recording waits for setup so installs never replace a runtime that live processing is using.
+    /// Capture does not depend on model readiness or a running inference worker.
+    var recordingAvailability: ActionAvailability { .init(reason: newMeetingBlockedReason) }
+
     var newMeetingBlockedReason: String? {
         if libraryRecovery != nil { return "The library needs attention before recording." }
         if store == nil { return "Your library is still opening." }
         if isRecording { return "A meeting is already recording." }
         if testingInputs || changingRecording { return "Audio devices are busy. Try again in a moment." }
         if importingLibrary || libraryImportPending { return "Finish the library import before recording." }
-        if setupBusy {
-            if let activeDownload { return "\(activeDownload.name) is downloading. Recording is available when it finishes, or cancel the download." }
-            return "Local setup is running. Recording is available when it finishes."
-        }
         return nil
     }
 
@@ -76,7 +79,7 @@ extension AppModel {
         guard modelChangesAllowed else { return }
         setupBusy = true; setupProgress = "Preparing local setup…"
         setupTask = Task { [self] in
-            defer { setupBusy = false; startNextDownload() }
+            defer { setupBusy = false; startNextDownload(); drainProcessingQueue() }
             do {
                 await service.stop()
                 guard let resources = Bundle.main.resourceURL else { throw RuntimeError.setupNeeded }
@@ -86,60 +89,79 @@ extension AppModel {
             } catch is CancellationError {
                 await Task { await self.refreshHealth() }.value
                 setupProgress = "Setup paused. You can retry when ready."
-            } catch { self.error = error.localizedDescription; setupProgress = error.localizedDescription; await refreshHealth() }
+            } catch { self.setupError = error.localizedDescription; setupProgress = error.localizedDescription; await refreshHealth() }
         }
     }
 
-    /// Downloads run one at a time; the runtime is stopped for each install.
     func enqueueDownload(_ id: String, token: String? = nil, makeDefault: Bool = false) {
-        guard let catalog, let descriptor = catalog.model(id), !isDownloading(id) else { return }
-        queuedDownloads.append(ModelDownload(id: id, name: descriptor.displayName, role: descriptor.role, makeDefault: makeDefault, token: token, tally: DownloadTally(catalog: catalog, modelID: id)))
+        guard let descriptor = catalog?.model(id), !isDownloading(id), let catalog else { return }
+        queuedDownloads.append(ModelDownload(id: id, name: descriptor.displayName, role: descriptor.role,
+            makeDefault: makeDefault, token: token, tally: DownloadTally(catalog: catalog, modelID: id)))
         startNextDownload()
     }
-
     func installModels(_ id: String, token: String? = nil) { enqueueDownload(id, token: token) }
-
     func removeQueuedDownload(_ id: String) { queuedDownloads.removeAll { $0.id == id } }
-
-    /// Cancels the active download and everything queued behind it. Verified files are retained.
-    func cancelSetup() {
-        queuedDownloads = []
-        setupTask?.cancel()
-    }
-
+    func cancelSetup() { queuedDownloads = []; setupTask?.cancel(); activationTask?.cancel() }
     func cancelDownload(_ id: String) {
         if activeDownload?.id == id { setupTask?.cancel() } else { removeQueuedDownload(id) }
     }
 
+    /// Network transfer owns only staged files; active inference keeps its snapshots.
     func startNextDownload() {
-        guard activeDownload == nil, !queuedDownloads.isEmpty, modelChangesAllowed else { return }
+        guard !isShuttingDown, activeDownload == nil, !queuedDownloads.isEmpty, !setupBusy,
+              libraryPhase == .ready, !importingLibrary, !libraryImportPending else { return }
         let next = queuedDownloads.removeFirst()
         activeDownload = next
-        setupBusy = true
         setupProgress = "Preparing to download \(next.name)…"
         setupTask = Task { [self] in
-            // cancelSetup() and shutdown() empty the queue first, so this only
-            // continues after a single download was cancelled or finished.
-            defer {
-                activeDownload = nil; setupBusy = false
-                startNextDownload()
-            }
+            defer { activeDownload = nil; activateStagedDownloads(); startNextDownload() }
             do {
-                await service.stop()
-                try await installer.installModels(next.id, token: next.token) { [weak self] progress in
+                try await installer.installModels(next.id, token: next.token, stageOnly: true) { [weak self] progress in
                     Task { @MainActor in self?.apply(progress, to: next.id) }
                 }
-                await refreshHealth()
-                if next.makeDefault && isModelReady(next.id) { setDefaultModel(next.id, role: next.role) }
-                setupProgress = "\(next.name) is downloaded and verified. Processing can run offline."
+                stagedDownloads.append(.init(id: next.id, makeDefault: next.makeDefault))
+                try store?.setPreference("setup.staged", value: stagedDownloads)
+                setupProgress = "Downloaded. Activation waits until recording and processing finish."
             } catch is CancellationError {
-                await Task { await self.refreshHealth() }.value
-                setupProgress = "Download paused. Verified files are kept for when you retry."
-            } catch {
-                self.error = "\(next.name): " + error.localizedDescription
-                setupProgress = error.localizedDescription
-                await refreshHealth()
+                setupProgress = "Download cancelled. Verified staged files are retained for retry."
+            } catch { self.setupError = next.name + ": " + error.localizedDescription }
+        }
+    }
+
+    /// Called when capture or a runtime owner releases its resources. Activation precedes inference.
+    func resumeIdleWork() {
+        activateStagedDownloads()
+        drainProcessingQueue()
+        startNextDownload()
+    }
+
+    func restoreStagedDownloads() {
+        stagedDownloads = (try? store?.preference("setup.staged", as: [StagedModelDownload].self)) ?? []
+        activateStagedDownloads()
+    }
+
+    func activateStagedDownloads() {
+        guard modelChangesAllowed, activationTask == nil, let next = stagedDownloads.first else { return }
+        setupBusy = true
+        setupProgress = "Activating downloaded model…"
+        activationTask = Task { [self] in
+            var succeeded = false
+            defer {
+                activationTask = nil; setupBusy = false
+                if succeeded { activateStagedDownloads() }
+                startNextDownload(); drainProcessingQueue()
             }
+            do {
+                await service.stop(); await intelligence.releaseCache()
+                try await installer.activateModels(next.id)
+                await refreshHealth()
+                if next.makeDefault && isModelReady(next.id) { setDefaultModel(next.id, role: catalog?.model(next.id)?.role ?? .speech) }
+                stagedDownloads.removeAll { $0.id == next.id }
+                try store?.setPreference("setup.staged", value: stagedDownloads)
+                setupProgress = "Model ready for local processing."
+                succeeded = true
+            } catch is CancellationError { setupProgress = "Activation paused. Downloaded files are retained." }
+            catch { self.setupError = "Model activation needs attention: " + error.localizedDescription }
         }
     }
 

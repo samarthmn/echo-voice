@@ -1,6 +1,19 @@
 import AVFoundation
 import EchoCore
 
+/// Advance by the requested time interval, not by its rounded sample count.
+/// A sub-sample tail must reach the end rather than repeatedly schedule zero frames.
+struct PlaybackBufferWindow {
+    let start: Double
+    let end: Double
+    var duration: Double { end - start }
+    init?(start: Double, end: Double) {
+        guard start.isFinite, end.isFinite, start >= 0, end > start else { return nil }
+        self.start = start
+        self.end = min(start + 2, end)
+    }
+}
+
 /// File access and conversion never run on the main actor or the audio render callback.
 private actor PlaybackBuffers {
     let directory: URL
@@ -105,11 +118,14 @@ final class MeetingPlayer {
                     if self.started && self.currentTime >= end - 0.015 { self.stop(); self.storedTime = end; return }
                     if self.started && self.currentTime > self.scheduledUntil + 0.01 { throw PlaybackError.underflow }
                     if self.scheduledUntil < end && self.scheduledUntil - self.currentTime < 12 {
-                        let length = min(2, end - self.scheduledUntil)
-                        let buffer = try await self.buffers.buffer(start: self.scheduledUntil, duration: length)
+                        guard let window = PlaybackBufferWindow(start: self.scheduledUntil, end: end) else { return }
+                        let buffer = try await self.buffers.buffer(start: window.start, duration: window.duration)
                         try Task.checkCancellation(); guard self.generation == token else { return }
-                        self.node.scheduleBuffer(buffer, completionHandler: nil)
-                        self.scheduledUntil += Double(buffer.frameLength) / 48_000
+                        self.scheduledUntil = window.end
+                        if buffer.frameLength > 0 { self.node.scheduleBuffer(buffer, completionHandler: nil) }
+                        else if !self.started {
+                            self.stop(); self.storedTime = end; return
+                        }
                         if !self.started && (self.scheduledUntil - self.seekTime >= 6 || self.scheduledUntil >= end) {
                             try self.engine.start(); self.node.play(); self.started = true
                         }

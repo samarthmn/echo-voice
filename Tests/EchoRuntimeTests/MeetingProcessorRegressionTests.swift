@@ -41,6 +41,30 @@ final class MeetingProcessorRegressionTests: XCTestCase {
             frameCount: Int64(frames), sha256: try AudioWindowAssembler.digest(url)))
     }
 
+    func testFinalizationCancellationKeepsProcessingStateAndDurableQueue() async throws {
+        let (paths, store, service, processor) = try fixture(aec: false)
+        defer { try? store.database.close(); try? FileManager.default.removeItem(at: paths.root) }
+        try saveAudio(store, id: "mic", epoch: "mic", track: .microphone, start: 0, duration: 5)
+        try store.enqueueProcessing(meetingID: "meeting")
+        await service.holdNextSpeech()
+        let task = Task { try await processor.finalize(meetingID: "meeting", onUpdate: { _ in }) }
+        for _ in 0..<100 {
+            if await service.hasHeldSpeech { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let held = await service.hasHeldSpeech
+        XCTAssertTrue(held)
+        await processor.cancel()
+        do { try await task.value; XCTFail("Expected cancellation") } catch is CancellationError { }
+        XCTAssertEqual(try store.meeting(id: "meeting")?.state, .finalizing)
+        XCTAssertEqual(try store.processingQueue().map(\.meetingID), ["meeting"])
+        let job = try XCTUnwrap(store.jobs(meetingID: "meeting").first { $0.kind == .transcribe })
+        XCTAssertEqual(job.status, .pending)
+        XCTAssertEqual(job.attempts, 0)
+        try await processor.finalize(meetingID: "meeting", onUpdate: { _ in })
+        XCTAssertEqual(try store.meeting(id: "meeting")?.state, .ready)
+    }
+
     func testFinalizationRestoresEveryPrunedLiveEpochTail() async throws {
         let (paths, store, service, processor) = try fixture(aec: false)
         defer { try? store.database.close(); try? FileManager.default.removeItem(at: paths.root) }

@@ -153,3 +153,14 @@ def test_intentional_sigint_exits_cleanly_without_startup_failure(data_root):
         if process.poll() is None:
             process.kill()
             process.wait()
+
+
+def test_stage_only_rejects_all_before_creating_model_files(data_root):
+    result = subprocess.run(
+        [sys.executable, "-m", "echo_service", "setup", "--data-root", str(data_root),
+         "--models", "all", "--stage-only"],
+        input="", capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 2
+    assert "--stage-only requires a single model selection" in result.stderr
+    assert not (data_root / "models" / ".staging").exists()

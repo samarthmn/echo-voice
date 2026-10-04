@@ -16,7 +16,7 @@ struct SetupChecklistView: View {
                 }
                 if item.kind != readiness.items.last?.kind { Divider() }
             }
-            if showsDownloads, model.activeDownload != nil || !model.queuedDownloads.isEmpty {
+            if showsDownloads, model.activeDownload != nil || !model.queuedDownloads.isEmpty || !model.stagedDownloads.isEmpty {
                 Divider()
                 DownloadQueueView()
             }
@@ -59,7 +59,7 @@ struct SetupStatusPill: View {
                     Circle().fill(overall.tone.color).frame(width: 8, height: 8)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(overall.title).font(.caption.weight(.semibold)).lineLimit(1)
+                    Text(model.newMeetingBlockedReason == nil ? "Ready to record" : overall.title).font(.caption.weight(.semibold)).lineLimit(1)
                     Text(subtitle(overall)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -98,7 +98,7 @@ struct SetupStatusPill: View {
         switch overall {
         case .ready: "Local only · models ready"
         case .checking: "Local only"
-        case .setupRequired: "Download a speech model"
+        case .setupRequired: "Transcription needs setup"
         case .permissionNeeded: model.microphonePermission == .denied ? "Denied in System Settings" : "Not yet allowed"
         case .downloading: model.activeDownload?.name ?? "Model download"
         case .attention: "Open for details"

@@ -1,6 +1,7 @@
 import Foundation
 import CoreAudio
 import AVFoundation
+import OSLog
 
 final class ProcessAudioTap {
     private var tapID: AudioObjectID = 0
@@ -91,7 +92,22 @@ final class MicrophoneCapture {
         if let onConfigurationChange {
             configurationObserver = NotificationCenter.default.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-            ) { _ in onConfigurationChange() }
+            ) { [weak engine] _ in
+                guard let engine else { return }
+                // Selecting the input during initialization can enqueue a
+                // notification delivered after start(). Restart only if that
+                // notification still describes an invalid capture graph.
+                let currentFormat = engine.inputNode.outputFormat(forBus: 0)
+                var currentDevice = AudioDeviceID(0)
+                var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+                let status = AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global, 0, &currentDevice, &size)
+                let unchanged = status == noErr && currentDevice == device.deviceID
+                    && currentFormat == format && engine.isRunning
+                Logger(subsystem: "com.samarthmn.EchoVoice", category: "Microphone").debug(
+                    "Microphone configuration notification: running=\(engine.isRunning), unchanged=\(unchanged)")
+                if !unchanged { onConfigurationChange() }
+            }
         }
     }
     func start() throws {

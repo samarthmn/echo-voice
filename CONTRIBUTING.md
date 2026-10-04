@@ -7,7 +7,7 @@ Use an Apple Silicon Mac with Xcode (including the Metal compiler), XcodeGen, an
 ./scripts/test.sh
 ```
 
-The build uses `Package.resolved`, `service/uv.lock`, the separate hashed Community lock and the pinned model catalog. `scripts/environment.sh` keeps build scratch local. The default build is a development build. Release packaging uses `scripts/build-release-runtime.sh`, `scripts/build.sh`, and `scripts/package.sh` after qualification.
+The build uses `Package.resolved`, `service/uv.lock`, the separate hashed Community lock and the pinned model catalog. `scripts/environment.sh` keeps build scratch local. The default build is a development build. Direct (production) packaging uses `scripts/build-release-runtime.sh`, `scripts/build-direct.sh`, and `scripts/package-direct.sh` after qualification — see `private-docs/docs/RELEASING.md`. Do not confuse Xcode `Release` with `CONFIGURATION=Direct`.
 
 For focused Swift checks, pass Xcode test selectors, for example:
 

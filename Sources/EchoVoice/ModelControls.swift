@@ -83,6 +83,10 @@ struct ModelActions: View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
             if let download = model.download(for: entry.id) {
                 DownloadProgressRow(download: download, queued: model.activeDownload?.id != entry.id) { model.cancelDownload(entry.id) }
+            } else if model.stagedDownloads.contains(where: { $0.id == entry.id }) {
+                Label("Downloaded · waiting to activate", systemImage: "checkmark.circle")
+                    .font(.callout).foregroundStyle(.secondary)
+                Button("Activate") { model.activateStagedDownloads() }.disabled(!model.modelChangesAllowed)
             } else {
                 if entry.gated && !ready { gatedFields }
                 if model.health == nil && !ready {

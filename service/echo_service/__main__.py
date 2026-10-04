@@ -70,13 +70,22 @@ def main():
     from .models import MANIFEST
     choices = tuple(k for k,v in MANIFEST["models"].items() if v.get("role") in ("speech", "notes", "speakers"))
     setup.add_argument("--models", choices=choices + ("all",), required=True)
+    setup.add_argument("--stage-only", action="store_true")
+    activate = commands.add_parser("activate-model")
+    activate.add_argument("--data-root", required=True, type=Path)
+    activate.add_argument("--model", choices=choices, required=True)
     remove = commands.add_parser("remove-model")
     remove.add_argument("--data-root", required=True, type=Path)
     remove.add_argument("--model", choices=choices + ("vision",), required=True)
     args = parser.parse_args()
+    if args.command == "setup" and args.stage_only and args.models == "all":
+        parser.error("--stage-only requires a single model selection")
     logging.disable(logging.CRITICAL)
     try:
-        if args.command == "remove-model":
+        if args.command == "activate-model":
+            from .installer import activate_models
+            activate_models(args.data_root.absolute(), args.model)
+        elif args.command == "remove-model":
             from .model_lifecycle import remove_model
             removed = remove_model(args.data_root.absolute(), args.model)
             print(json.dumps({"stage":"complete","status":"removed","models":removed}), flush=True)
@@ -84,7 +93,11 @@ def main():
             from .installer import install_models
             config = stdin_config()
             token = config.pop("token", config.pop("hf_token", None))
-            install_models(args.data_root.absolute(), args.models, token)
+            if args.stage_only:
+                from .installer import stage_models
+                stage_models(args.data_root.absolute(), args.models, token)
+            else:
+                install_models(args.data_root.absolute(), args.models, token)
         else:
             root_string = os.environ.get("ECHO_DATA_ROOT")
             if not root_string or not 0 <= args.port <= 65535:

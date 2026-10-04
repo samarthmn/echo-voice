@@ -108,17 +108,45 @@ final class CaptureControlRegressionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         devices.failNextMicrophoneOpen(count: 3)
         devices.configurationChanged()
-        try await Task.sleep(for: .milliseconds(1500))
+        try await Task.sleep(for: .milliseconds(3500))
         XCTAssertEqual(devices.microphoneOpenCount, 4, "Initial capture plus three automatic attempts")
         XCTAssertTrue(capture.microphoneMuted)
         XCTAssertTrue(capture.isRecording)
         devices.configurationChanged()
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(for: .milliseconds(800))
         XCTAssertEqual(devices.microphoneOpenCount, 4)
         try await capture.changeMicrophone(uid: devices.mic.id)
         XCTAssertFalse(capture.microphoneMuted)
         XCTAssertEqual(devices.microphoneOpenCount, 5)
         await capture.stop()
+    }
+
+    func testStableMicrophoneIsNotRestartedWithoutConfigurationChange() async throws {
+        let (root, devices, capture) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let opened = devices.microphoneOpenCount
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(devices.microphoneOpenCount, opened,
+                       "Default-output or idle monitor noise must not tear down a stable microphone")
+        XCTAssertFalse(capture.microphoneMuted)
+        XCTAssertTrue(capture.recordingFormats.contains { $0.track == .microphone })
+        await capture.stop()
+    }
+
+    func testStopWaitsForInFlightTransitionWithoutOrphaningWaiters() async throws {
+        let (root, devices, capture) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        devices.blockNextApplication()
+        let transition = Task { try await capture.changeApplication(sourceID: devices.app.id) }
+        let started = await semaphoreWait(devices.applicationStarted)
+        XCTAssertTrue(started)
+        let stop = Task { await capture.stop() }
+        try await Task.sleep(for: .milliseconds(50))
+        devices.releaseApplication.signal()
+        _ = try? await transition.value
+        await stop.value
+        XCTAssertFalse(capture.isRecording)
+        XCTAssertEqual(capture.lifecycleState, .idle)
     }
 }
 

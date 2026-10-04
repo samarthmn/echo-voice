@@ -8,9 +8,11 @@ from echo_service.errors import ServiceError
 @pytest.fixture
 def tiny_manifest(monkeypatch):
     content = b'actual-weight-data'
-    manifest = {"models": {"asr": {"repo": "example/weights", "revision": "a" * 40, "gated": False,
+    manifest = {"models": {"asr": {"role": "speech", "repo": "example/weights", "revision": "a" * 40, "gated": False,
                     "files": [{"path": "weights.safetensors", "size": len(content), "sha256": hashlib.sha256(content).hexdigest(), "git_blob_sha1": None}]}}}
     monkeypatch.setattr(models, "MANIFEST", manifest)
+    from echo_service import model_lifecycle
+    monkeypatch.setattr(model_lifecycle, "MANIFEST", manifest)
     return content
 
 def test_readiness_requires_actual_verified_weights(data_root, tiny_manifest):
@@ -117,3 +119,36 @@ def test_repair_never_follows_links_in_expected_snapshot_paths(data_root, tiny_m
     assert models.ModelAssets(data_root).ready("asr")
     assert not snapshot.is_symlink()
     assert ((external / "weights.safetensors").read_bytes() if external.is_dir() else external.read_bytes()) == preserved
+
+
+def test_staging_does_not_publish_weights_until_activation(data_root, tiny_manifest):
+    from echo_service.installer import stage_models, activate_models, staging_root
+    source = data_root / "download"
+    source.write_bytes(tiny_manifest)
+    stage_models(data_root, "asr", None, downloader=lambda **kwargs: str(source))
+    assert not models.ModelAssets(data_root).ready("asr")
+    staged_root = staging_root(data_root, "asr")
+    sibling = staging_root(data_root, "asr").parent / "other-model"
+    sibling.mkdir()
+    (sibling / "keep").write_bytes(b"another queued download")
+    activate_models(data_root, "asr")
+    assert models.ModelAssets(data_root).ready("asr")
+    assert not staged_root.exists()
+    assert (sibling / "keep").read_bytes() == b"another queued download"
+    # Activation is resumable and repeatable without a network download.
+    activate_models(data_root, "asr")
+    assert models.ModelAssets(data_root).ready("asr")
+
+
+def test_corrupt_staged_weights_leave_active_model_untouched(data_root, tiny_manifest):
+    from echo_service.installer import stage_models, activate_models, staging_root
+    source = data_root / "download"
+    source.write_bytes(tiny_manifest)
+    install_models(data_root, "asr", None, downloader=lambda **kwargs: str(source))
+    stage_models(data_root, "asr", None, downloader=lambda **kwargs: str(source))
+    staged = models.ModelAssets(staging_root(data_root, "asr")).path("asr")
+    (staged / "weights.safetensors").write_bytes(b'broken')
+    with pytest.raises(ServiceError):
+        activate_models(data_root, "asr")
+    assert models.ModelAssets(data_root).ready("asr")
+    assert staged.exists(), "Failed activation must retain staged files for retry"

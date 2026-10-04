@@ -10,6 +10,9 @@ from .errors import ServiceError
 
 
 def worker_main(kind, root_string, connection):
+    if kind == "community1":
+        from .runtime_layout import activate_worker_environment
+        activate_worker_environment()
     def terminate_cleanly(signum, frame):
         # Let multiprocessing finalizers unlink library-created semaphores.
         # The supervisor still escalates to kill if native inference is stuck.

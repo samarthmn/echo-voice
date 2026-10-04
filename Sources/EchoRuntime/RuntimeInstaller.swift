@@ -56,7 +56,7 @@ public actor RuntimeInstaller {
         _ = try await ManagedCommand.run(executable: URL(fileURLWithPath: "/bin/bash"), arguments: [script.path, paths.root.path, service.path], environment: LocalService.cleanEnvironment(), input: nil, onProgress: onProgress)
     }
 
-    public func installModels(_ selection: String, token: String?, onProgress: @escaping @Sendable (SetupProgress) -> Void) async throws {
+    public func installModels(_ selection: String, token: String?, stageOnly: Bool = false, onProgress: @escaping @Sendable (SetupProgress) -> Void) async throws {
         guard try ModelCatalog(url: ModelCatalog.bundledURL).model(selection) != nil else { throw RuntimeError.processFailed("Choose a supported model group.") }
         var env = LocalService.cleanEnvironment()
         let runtime = RuntimeLayout(paths: paths)
@@ -65,13 +65,28 @@ public actor RuntimeInstaller {
         env["PYTHONPATH"] = ModelCatalog.bundledURL.deletingLastPathComponent().path + ":" + runtime.voiceStudio.path
         env["HF_HUB_DISABLE_TELEMETRY"] = "1"; env["PYTHONDONTWRITEBYTECODE"] = "1"
         for key in ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] { env.removeValue(forKey: key) }
-        let temp = paths.runtimeURL.appendingPathComponent("setup-tmp")
+        let temp = paths.runtimeURL.appendingPathComponent("setup-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
         env["TMPDIR"] = temp.path
         defer { try? FileManager.default.removeItem(at: temp) }
         let input = try JSONSerialization.data(withJSONObject: ["token": token ?? ""])
-        _ = try await ManagedCommand.run(executable: runtime.python, arguments: ["-m", "echo_service", "setup", "--data-root", paths.root.path, "--models", selection], environment: env, input: input + Data([10]), onProgress: onProgress)
+        _ = try await ManagedCommand.run(executable: runtime.python, arguments: ["-m", "echo_service", "setup", "--data-root", paths.root.path, "--models", selection] + (stageOnly ? ["--stage-only"] : []), environment: env, input: input + Data([10]), onProgress: onProgress)
     }
+    public func activateModels(_ selection: String) async throws {
+        guard try ModelCatalog(url: ModelCatalog.bundledURL).model(selection) != nil else { throw RuntimeError.setupNeeded }
+        var env = LocalService.cleanEnvironment()
+        let runtime = RuntimeLayout(paths: paths)
+        env.merge(runtime.environment()) { _, new in new }
+        env["PYTHONPATH"] = ModelCatalog.bundledURL.deletingLastPathComponent().path + ":" + runtime.voiceStudio.path
+        let temp = paths.runtimeURL.appendingPathComponent("activate-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        env["TMPDIR"] = temp.path
+        defer { try? FileManager.default.removeItem(at: temp) }
+        _ = try await ManagedCommand.run(executable: runtime.python,
+            arguments: ["-m", "echo_service", "activate-model", "--data-root", paths.root.path, "--model", selection],
+            environment: env, input: nil, onProgress: { _ in })
+    }
+
     public func removeModel(_ selection: String) async throws {
         guard try ModelCatalog(url: ModelCatalog.bundledURL).model(selection) != nil else { throw RuntimeError.processFailed("Choose a supported model.") }
         var env = LocalService.cleanEnvironment()

@@ -398,6 +398,7 @@ public actor MeetingProcessor {
     private var speechPlanWindows: [String: [ProcessingWindow]] = [:]
     private var speechPlanChunkCounts: [String: Int] = [:]
     private let maximumAttempts = 3
+    private var eventSink: (@Sendable (ProcessingEvent) -> Void)?
     private var previewTimes: [AudioTrack: Date] = [:]
 
     public init(store: MeetingStore, paths: AppPaths, service: any MeetingAudioService, intelligence: LocalIntelligence) {
@@ -474,9 +475,12 @@ public actor MeetingProcessor {
             throw MeetingProcessingError.stagesFailed(["Speaker grouping could not finish. Retry from Review speakers."])
         }
     }
-    public func finalize(meetingID: String, diarizationWindowSeconds: Int?, onUpdate: @escaping @Sendable (String) -> Void) async throws {
+    public func finalize(meetingID: String, diarizationWindowSeconds: Int?, onEvent: (@Sendable (ProcessingEvent) -> Void)? = nil, onUpdate: @escaping @Sendable (String) -> Void) async throws {
         guard diarizationWindowSeconds == nil || diarizationWindowSeconds == 1800 else { throw MeetingProcessingError.invalidResponse }
         await cancel()
+        eventSink = onEvent
+        defer { eventSink = nil }
+        try Task.checkCancellation()
         try store.recoverRunningJobs()
         let task = Task { try await self.runFinalization(meetingID: meetingID, diarizationWindowSeconds: diarizationWindowSeconds, onUpdate: onUpdate) }
         finalTask = task
@@ -887,6 +891,16 @@ public actor MeetingProcessor {
         activeJobKind = job.kind
         defer { if activeJobID == job.id { activeJobID = nil; activeJobKind = nil } }
         do {
+            let stage: ProcessingEvent.Stage
+            switch job.kind {
+            case .prepareAudio, .vision: stage = .preparing
+            case .transcribe: stage = .transcribing
+            case .diarize: stage = .speakers
+            case .notes: stage = .notes
+            }
+            let jobs = try store.jobs(meetingID: job.meetingID).filter { $0.kind == job.kind && $0.status != .cancelled }
+            eventSink?(.init(meetingID: job.meetingID, stage: stage, message: "Processing " + stage.rawValue,
+                             completed: jobs.filter { $0.status == .completed }.count, total: jobs.count))
             report("Processing \(job.kind.rawValue)…", to: onUpdate)
             try await operation(decode(job)); try Task.checkCancellation()
             job.status = .completed; try store.updateJob(job)
@@ -911,10 +925,9 @@ public actor MeetingProcessor {
                 where job.status == .failed || (job.status == .pending && job.attempts >= maximumAttempts) {
                 job.status = .pending; job.attempts = 0; try store.updateJob(job)
             }
-            let activeVersion = try store.activeTranscriptVersion(meetingID: meetingID)
-            let completedVersion = try store.transcriptVersions(meetingID: meetingID).contains { $0.id == activeVersion && $0.status == .ready }
-            let reuseRedactedTranscript = try store.canReuseTranscriptAfterRedaction(meetingID: meetingID)
-            let reuseRetainedTranscript = completedVersion || reuseRedactedTranscript
+            let context = try store.finalizationContext(meetingID: meetingID)
+            let activeVersion = context.activeVersionID
+            let reuseRetainedTranscript = context.reusesTranscript
             // A reviewed/generated version is immutable ASR input for downstream work.
             // Only Regenerate creates another transcript; Generate / Retry must not mix windows.
             if !reuseRetainedTranscript {
@@ -937,7 +950,7 @@ public actor MeetingProcessor {
             await service.unload()
             try Task.checkCancellation()
             let remote = try store.chunks(meetingID: meetingID, track: meeting.recordingMode.groupingTrack)
-            let configuration = try store.transcriptVersions(meetingID: meetingID).first(where: { $0.id == activeVersion })?.configuration ?? store.configuration(meetingID: meetingID)
+            let configuration = context.configuration
             if !remote.isEmpty && (configuration == nil || configuration?.speakers != nil) {
                 var payload = ProcessingIdentity.diarizationWindow(meetingID: meetingID, chunks: remote, windowSeconds: diarizationWindowSeconds, track: meeting.recordingMode.groupingTrack, versionID: activeVersion)
                 payload.speakerModel = configuration?.speakers
@@ -988,7 +1001,7 @@ public actor MeetingProcessor {
             }
             await intelligence.releaseCache()
             let failed = try store.jobs(meetingID: meetingID).filter { job in
-                guard job.kind == .transcribe || job.kind == .prepareAudio else { return false }
+                guard job.kind != .vision else { return false }
                 if job.kind == .transcribe, reuseRetainedTranscript { return false }
                 return [.failed, .pending, .running].contains(job.status)
             }
@@ -998,7 +1011,7 @@ public actor MeetingProcessor {
             onUpdate("Meeting processing complete")
         } catch {
             await service.unload(); await intelligence.releaseCache()
-            if var latest = try? store.meeting(id: meetingID) { latest.state = Task.isCancelled ? .interrupted : .failed; try? store.updateMeeting(latest) }
+            if var latest = try? store.meeting(id: meetingID) { latest.state = Task.isCancelled || error is CancellationError ? .finalizing : .failed; try? store.updateMeeting(latest) }
             throw error
         }
     }

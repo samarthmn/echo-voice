@@ -4,7 +4,6 @@ A local meeting workspace for Apple Silicon Macs. Record an online call or a con
 
 **Release status:** 1.0 is under qualification. The direct download and Mac App Store listing will be available after their respective release checks.
 
-![Echo Voice transcript workspace showing a fictional meeting](docs/screenshots/transcript.jpg)
 
 [Preview the standalone landing page](website/echo-voice.html).
 
@@ -12,7 +11,7 @@ A local meeting workspace for Apple Silicon Macs. Record an online call or a con
 
 - **Online meetings:** capture the selected application and microphone separately. Browser capture can include other audible tabs in that browser.
 - **In-person conversations:** record one room microphone. Optional speaker grouping adds labels after recording; it does not produce isolated voice recordings.
-- **Your models, in view:** speech, notes and speaker-grouping choices appear in the workspace. Choose native models or a compatible, locally installed Ollama model for notes.
+- **Your models, in view:** meeting details retain speech, notes, and speaker-grouping provenance. Choose native models or a compatible, locally installed Ollama model for notes.
 - **Review with the audio:** word-following replay, timestamps, speed controls, saved highlights and bookmarks. Approximate timing is identified.
 - **Make corrections:** edit text, rename generic speakers, add a vocabulary dictionary, search and regenerate transcripts while retaining history.
 - **Keep useful notes:** summaries, decisions and action items link to transcript evidence. Review generated text before relying on it.
@@ -36,11 +35,11 @@ The public download is a GitHub Release asset named `Echo-Voice-<version>-arm64.
 
 ## First meeting
 
-1. Follow the **Setup Guide** that opens on first launch. It checks the included runtime, downloads the speech model you choose with a progress bar, offers optional notes and speaker grouping, and shows microphone access. Every step can be skipped; reopen it from **Help → Setup Guide…** or the status indicator at the bottom of the sidebar, which reads **Ready to record**, **Setup required**, **Downloading** or **Microphone access needed**.
-2. Downloads continue in the background while you browse. Recording waits until a download finishes or is cancelled; the New Meeting button explains why. Manage models later in **Settings → Models**.
+1. Use the short **Setup Guide** checklist or choose **Finish Later**. Recording works before transcription models are installed. Reopen setup from **Help → Setup Guide…** or the sidebar readiness indicator.
+2. Downloads continue while recording. Activation waits for recording and inference to finish; manage staged downloads and defaults in **Settings → Models**.
 3. For Ollama notes, start your own local Ollama server, choose **Meeting notes → Run using → Ollama**, refresh, choose a model, and select **Use as Default**. Echo Voice neither installs nor removes Ollama models.
 4. Choose **New Meeting → Online meeting** or **In person**. Select the inputs, choose whether to show live transcription, and acknowledge recording consent. Input testing is optional.
-5. Start, pause or stop from the app or menu bar. You can stop live transcription during the meeting, but cannot restart it until a new meeting. After recording stops, review the complete transcript and notes. Missing model setup queues processing without discarding saved audio.
+5. Start, pause or stop from the app or menu bar. You can stop live transcription during the meeting, but cannot restart it until a new meeting. Recording controls stay visible when you browse other meetings. After Stop, completed meetings open to notes when available, with transcript evidence one click away. Missing model setup queues processing without discarding saved audio.
 6. Use **Export** for an independent copy. Keep Echo Voice open while recording and processing.
 
 Read the [user guide](docs/USER_GUIDE.md), [recovery and backup guide](docs/OPERATIONS.md), [privacy policy](docs/PRIVACY.md).

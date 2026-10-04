@@ -6,7 +6,7 @@ extension AppModel {
     private static let bundledCatalog = try? ModelCatalog(url: ModelCatalog.bundledURL)
     var catalog: ModelCatalog? { Self.bundledCatalog }
     var modelChangesAllowed: Bool {
-        LibraryMutationPolicy.allowsModelChanges(phase: libraryPhase, setupBusy: setupBusy, recording: isRecording, processing: processingID != nil, changingRecording: changingRecording, importingLibrary: importingLibrary, libraryImportPending: libraryImportPending)
+        !isShuttingDown && !redactionBusy && inferenceHandoff == nil && activeDownload == nil && LibraryMutationPolicy.allowsModelChanges(phase: libraryPhase, setupBusy: setupBusy, recording: isRecording, processing: processingID != nil, changingRecording: changingRecording, importingLibrary: importingLibrary, libraryImportPending: libraryImportPending)
     }
     func defaultModel(_ role: ModelRole) -> String {
         if role == .notes { return defaultNotesSelection()?.id ?? "" }
@@ -41,7 +41,7 @@ extension AppModel {
                 try store?.setPreference("default.notes", value: "")
             }
             objectWillChange.send()
-        } catch { self.error = error.localizedDescription }
+        } catch { self.setupError = error.localizedDescription }
     }
     func setDefaultModel(_ id: String, role: ModelRole) {
         if role == .notes {
@@ -54,7 +54,7 @@ extension AppModel {
             try store?.setPreference("default.\(role.rawValue)", value: id)
             if role == .speech { UserDefaults.standard.set(id == "asr" ? "whisper" : id, forKey: "speechRecognitionModel") }
             objectWillChange.send()
-        } catch { self.error = error.localizedDescription }
+        } catch { self.setupError = error.localizedDescription }
     }
     func processingConfiguration(speech: SpeechRecognitionModel, includeVocabulary: Bool = true,
                                  speakerModelID: String? = nil) throws -> ProcessingConfiguration {
@@ -64,7 +64,7 @@ extension AppModel {
     }
     func refreshOllamaModels() async {
         guard !refreshingOllama else { return }
-        refreshingOllama = true; defer { refreshingOllama = false; ollamaChecked = true }
+        refreshingOllama = true; defer { refreshingOllama = false; ollamaChecked = true; drainProcessingQueue() }
         do {
             ollamaModels = try await ollamaNotes.models()
             ollamaStatus = ollamaModels.isEmpty ? "Ollama is running, but no compatible local text models are installed." : "\(ollamaModels.count) compatible local model\(ollamaModels.count == 1 ? "" : "s") found."
@@ -75,8 +75,8 @@ extension AppModel {
     func removeModel(_ id: String) {
         guard modelChangesAllowed, let descriptor = catalog?.model(id) else { return }
         setupBusy = true
-        Task {
-            defer { setupBusy = false; startNextDownload() }
+        setupTask = Task {
+            defer { setupBusy = false; startNextDownload(); drainProcessingQueue() }
             do {
                 await service.stop(); await intelligence.releaseCache()
                 // The confirmation describes the now-unconfigured default. Keep jobs pinned.
@@ -84,7 +84,7 @@ extension AppModel {
                 try await installer.removeModel(id)
                 setupProgress = "Model removed. Saved transcripts and notes are retained. Pending work keeps its original model selection."
                 await refreshHealth()
-            } catch { self.error = error.localizedDescription; await refreshHealth() }
+            } catch { self.setupError = error.localizedDescription; await refreshHealth() }
         }
     }
 }

@@ -1186,6 +1186,20 @@ extension MeetingStore {
             try db.execute(sql: "CREATE INDEX version_segments_window ON version_segments(version_id,window_id,start_time,id)")
             try db.execute(sql: "CREATE INDEX chunks_track_start ON chunks(meeting_id,track,start_time)")
         }
+        migrator.registerMigration("durableProcessingQueueV1") { db in
+            try db.execute(sql: """
+                CREATE TABLE processing_queue (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    meeting_id TEXT NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
+                    windowed_speakers BOOLEAN NOT NULL DEFAULT 0
+                );
+                INSERT INTO processing_queue(meeting_id)
+                    SELECT id FROM meetings WHERE state = 'finalizing' ORDER BY started_at;
+                """)
+        }
+        migrator.registerMigration("processingQueueReadinessV1") { db in
+            try db.execute(sql: "ALTER TABLE processing_queue ADD COLUMN waiting_models BOOLEAN NOT NULL DEFAULT 0")
+        }
         return migrator
     }
 

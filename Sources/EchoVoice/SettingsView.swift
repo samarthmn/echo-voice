@@ -47,7 +47,8 @@ struct SettingsView: View {
                         case .storage: StorageSettingsView()
                         case .about: AboutSettingsView()
                         }
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(Theme.Space.xl)
+                    }.frame(maxWidth: 720, alignment: .leading).padding(Theme.Space.xl)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
                 .onChange(of: model.settingsModelRole) { _, role in withAnimation { proxy.scrollTo(role, anchor: .top) } }
                 .onAppear { proxy.scrollTo(model.settingsModelRole, anchor: .top) }
@@ -56,6 +57,9 @@ struct SettingsView: View {
         .frame(minWidth: 780, minHeight: 580)
         .tint(Theme.accent)
         .onAppear { model.refreshPermissions(); Task { await model.refreshHealth() } }
+        .alert("Settings need attention", isPresented: Binding(get: { model.setupError != nil }, set: { if !$0 { model.setupError = nil } })) {
+            Button("OK") { model.setupError = nil }
+        } message: { Text(model.setupError ?? "") }
     }
 }
 

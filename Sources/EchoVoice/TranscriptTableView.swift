@@ -3,6 +3,8 @@ import SwiftUI
 import EchoCore
 
 /// AppKit asks for only visible rows; the list model loads their 200-row payload pages on demand.
+/// Row heights come from each hosted row's rendered height at the real column width;
+/// NSTableView's automatic heights do not give SwiftUI that width when measuring.
 struct TranscriptTableView: NSViewRepresentable {
     @ObservedObject var list: TranscriptListModel
     @ObservedObject var model: AppModel
@@ -17,8 +19,8 @@ struct TranscriptTableView: NSViewRepresentable {
         let table = NSTableView()
         table.headerView = nil
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        table.usesAutomaticRowHeights = true
-        table.rowHeight = 96
+        table.usesAutomaticRowHeights = false
+        table.rowHeight = Coordinator.estimatedRowHeight
         table.intercellSpacing = NSSize(width: 0, height: 8)
         table.backgroundColor = .clear
         table.selectionHighlightStyle = .none
@@ -31,8 +33,19 @@ struct TranscriptTableView: NSViewRepresentable {
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
+        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         context.coordinator.table = table
         return scroll
+    }
+
+    /// Fill the offered space; never report the document (full transcript) height.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        func resolved(_ value: CGFloat?, fallback: CGFloat) -> CGFloat {
+            guard let value, value.isFinite else { return fallback }
+            return max(0, value)
+        }
+        return CGSize(width: resolved(proposal.width, fallback: 400), height: resolved(proposal.height, fallback: 300))
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
@@ -56,9 +69,11 @@ struct TranscriptTableView: NSViewRepresentable {
                 ? list.rows.indices.filter { highlightedIDs.contains(list.rows[$0].id) }
                 : Array(list.rows.indices)
             coordinator.visibleIDs = coordinator.visibleIndices.map { list.rows[$0].id }
+            coordinator.positions = Dictionary(uniqueKeysWithValues: coordinator.visibleIDs.enumerated().map { ($0.element, $0.offset) })
             coordinator.rowCount = list.count
             coordinator.loadedRevision = list.updateRevision
             _ = list.consumeChangedRows()
+            if coordinator.sessionRevision != list.sessionRevision { coordinator.resetHeights() }
             coordinator.sessionRevision = list.sessionRevision
             if list.count == 0 { coordinator.lastRevealID = nil }
             table.reloadData()
@@ -87,10 +102,14 @@ struct TranscriptTableView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        static let estimatedRowHeight: CGFloat = 96
         var parent: TranscriptTableView
         weak var table: NSTableView?
         var visibleIndices: [Int] = []
         var visibleIDs: [String] = []
+        var positions: [String: Int] = [:]
+        private var heights: [String: CGFloat] = [:]
+        private var pendingHeightRows = IndexSet()
         var rowCount = -1
         var loadedRevision = -1
         var sessionRevision = -1
@@ -103,17 +122,58 @@ struct TranscriptTableView: NSViewRepresentable {
 
         func numberOfRows(in tableView: NSTableView) -> Int { visibleIndices.count }
 
+        func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+            guard row >= 0 && row < visibleIDs.count else { return Self.estimatedRowHeight }
+            return heights[visibleIDs[row]] ?? Self.estimatedRowHeight
+        }
+
+        func resetHeights() {
+            heights.removeAll()
+            pendingHeightRows.removeAll()
+        }
+
+        /// Called from SwiftUI layout; table updates are deferred out of that pass and coalesced.
+        func reportHeight(_ height: CGFloat, for id: String) {
+            let height = ceil(height)
+            guard height > 0, abs((heights[id] ?? -1) - height) > 0.5 else { return }
+            heights[id] = height
+            guard let position = positions[id] else { return }
+            let scheduled = !pendingHeightRows.isEmpty
+            pendingHeightRows.insert(position)
+            guard !scheduled else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let table = self.table else { return }
+                let rows = self.pendingHeightRows.filteredIndexSet { $0 < table.numberOfRows }
+                self.pendingHeightRows.removeAll()
+                guard !rows.isEmpty else { return }
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0
+                    table.noteHeightOfRows(withIndexesChanged: rows)
+                }
+            }
+        }
+
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             guard row >= 0 && row < visibleIndices.count else { return nil }
             let source = visibleIndices[row]
-            let root: AnyView
+            let id = visibleIDs[row]
+            let content: AnyView
             if let segment = parent.list.segment(at: source) {
-                root = AnyView(TranscriptRow(playbackModel: parent.playbackModel, segment: segment)
+                content = AnyView(TranscriptRow(playbackModel: parent.playbackModel, segment: segment)
                     .environmentObject(parent.model).padding(.horizontal, 16))
             } else {
-                root = AnyView(Text("Loading transcript…").foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 72, alignment: .leading).padding(.horizontal, 16))
+                content = AnyView(Text("Loading transcript…").foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 72, alignment: .leading).padding(.horizontal, 16))
                 Task { await parent.list.loadPage(containing: source) }
             }
+            let root = AnyView(content
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { [weak self] proxy in
+                    Color.clear.onChange(of: proxy.size.height, initial: true) { _, height in
+                        self?.reportHeight(height, for: id)
+                    }
+                })
+                .id(id)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
             let identifier = NSUserInterfaceItemIdentifier("passage-host")
             if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? NSHostingView<AnyView> {
                 reused.rootView = root
@@ -121,6 +181,8 @@ struct TranscriptTableView: NSViewRepresentable {
             }
             let view = NSHostingView(rootView: root)
             view.identifier = identifier
+            view.sizingOptions = []
+            view.clipsToBounds = true
             return view
         }
     }

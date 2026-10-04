@@ -15,7 +15,7 @@ def progress(**fields):
     print(json.dumps(fields, separators=(",", ":")), flush=True)
 
 
-def install_models(root: Path, selection: str, token: str | None, *, downloader=None):
+def install_models(root: Path, selection: str, token: str | None, *, downloader=None, finalize_runtime=True):
     configure(root, offline=False)
     if downloader is None:
         from huggingface_hub import hf_hub_download
@@ -112,7 +112,48 @@ def install_models(root: Path, selection: str, token: str | None, *, downloader=
         no_symlinks(marker)
         marker.write_text(item["revision"] + "\n")
         progress(stage="model", model=name, status="ready")
-    if "community1" in names:
+    if finalize_runtime and "community1" in names:
         from .community_setup import install_runtime
         install_runtime(root, progress)
     progress(stage="complete", status="ready", models=names)
+
+
+def staging_root(root: Path, selection: str) -> Path:
+    from .model_lifecycle import selected_assets
+    selected_assets(selection)  # Validate before constructing any path.
+    return root / "models" / ".staging" / selection
+
+
+def stage_models(root: Path, selection: str, token: str | None, *, downloader=None):
+    """Never touch active snapshots or restart an inference worker."""
+    staged = staging_root(root, selection)
+    no_symlinks(staged)
+    staged.mkdir(parents=True, exist_ok=True, mode=0o700)
+    install_models(staged, selection, token, downloader=downloader, finalize_runtime=False)
+    progress(stage="staged", status="Waiting for model activation", model=selection)
+
+
+def activate_models(root: Path, selection: str):
+    """Called only under the app's exclusive inference lease. No weight downloads."""
+    from .model_lifecycle import selected_assets
+    staged = staging_root(root, selection)
+    assets = models.ModelAssets(staged)
+    names = selected_assets(selection)
+    # A retry after successful activation and staging cleanup is already complete.
+    no_symlinks(staged)
+    if not staged.exists() and all(models.ModelAssets(root).ready(name) for name in names):
+        progress(stage="complete", status="ready", models=names)
+        return
+    # Validate the complete dependency set before touching any active snapshot.
+    for name in names:
+        assets.require(name)
+    def staged_file(**kwargs):
+        for name in names:
+            entry = models.MANIFEST["models"][name]
+            if entry["repo"] == kwargs["repo_id"] and entry["revision"] == kwargs["revision"]:
+                return str(assets.path(name) / kwargs["filename"])
+        raise ServiceError("model_unavailable", "The staged model is incomplete. Download it again.", 503, True)
+    install_models(root, selection, None, downloader=staged_file)
+    # Keep failed activations resumable, but release downloaded duplicates on success.
+    no_symlinks(staged)
+    shutil.rmtree(staged)

@@ -116,6 +116,7 @@ public final class AudioCaptureController {
     private var applicationGap: CaptureGap?
     private var microphoneRecoveryTask: Task<Void, Never>?
     private var microphoneRecoveryAttempts: [Double] = []
+    private var microphoneRecoveryEarliest: ContinuousClock.Instant?
     private var desiredMicrophoneMuted = false
     private var microphoneRecoveryRequiresSelection = false
     private let microphoneGate = MicrophoneAdmissionGate()
@@ -131,6 +132,7 @@ public final class AudioCaptureController {
     private var transitionWaiters: [CheckedContinuation<Void, Never>] = []
     private let hardware = SerializedHardwareLifecycle<CaptureHardwareSession>(label: "EchoVoice.audio.hardware")
     private let devices: CaptureDeviceProvider
+    private static let microphoneRecoveryDebounce: Duration = .milliseconds(600)
 
     public private(set) var lifecycleState: CaptureLifecycleState = .idle
 
@@ -305,9 +307,7 @@ public final class AudioCaptureController {
 
     public func pause() async throws {
         let requestedMeetingID = configuration?.meetingID
-        while transitioning {
-            await withCheckedContinuation { transitionWaiters.append($0) }
-        }
+        await waitWhileTransitioning()
         try Task.checkCancellation()
         guard !stopRequested else { throw CancellationError() }
         guard let requestedMeetingID, configuration?.meetingID == requestedMeetingID else {
@@ -369,7 +369,7 @@ public final class AudioCaptureController {
                                                       cause: userRequest ? .userMute : .deviceUnavailable, epochID: nil)))
             }
         }
-        while transitioning { await withCheckedContinuation { transitionWaiters.append($0) } }
+        await waitWhileTransitioning()
         try Task.checkCancellation()
         guard configuration?.meetingID == requestedMeetingID, !stopRequested else { throw CancellationError() }
         if muted {
@@ -533,9 +533,7 @@ public final class AudioCaptureController {
 
     public func stop() async {
         requestCancellation()
-        while transitioning {
-            await withCheckedContinuation { transitionWaiters.append($0) }
-        }
+        await waitWhileTransitioning()
         transitioning = true
         lifecycleState = .stopping
         defer {
@@ -575,6 +573,7 @@ public final class AudioCaptureController {
         microphoneGap = nil
         microphoneRecoveryTask?.cancel()
         microphoneRecoveryTask = nil
+        microphoneRecoveryEarliest = nil
         microphoneRecoveryAttempts = []
         desiredMicrophoneMuted = false
         microphoneRecoveryRequiresSelection = false
@@ -628,9 +627,7 @@ public final class AudioCaptureController {
     }
 
     private func interruptAfterTransition(_ reason: String, at time: Double?) async {
-        while transitioning {
-            await withCheckedContinuation { transitionWaiters.append($0) }
-        }
+        await waitWhileTransitioning()
         guard !stopRequested, worker?.hasTrack(.microphone) != true,
               worker?.hasTrack(.remote) != true else { return }
         await interrupt(reason, at: time)
@@ -662,22 +659,18 @@ public final class AudioCaptureController {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in await self?.interrupt("The Mac went to sleep. Resume recording after waking.") }
         }
-        for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultOutputDevice] {
-            var address = AudioObjectPropertyAddress(mSelector: selector,
-                                                     mScope: kAudioObjectPropertyScopeGlobal,
-                                                     mElement: kAudioObjectPropertyElementMain)
-            let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                Task { @MainActor [weak self] in
-                    if selector == kAudioHardwarePropertyDefaultOutputDevice {
-                        self?.scheduleMicrophoneRecovery()
-                    }
-                    await self?.inspectSources()
-                }
-            }
-            if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
-                                                   DispatchQueue.main, listener) == noErr {
-                deviceListeners.append((selector, listener))
-            }
+        // Speakers/headphones changing the default *output* must not tear down the mic.
+        // Recover from device-list changes, AVAudioEngineConfigurationChange, or explicit Inputs.
+        let selector = kAudioHardwarePropertyDevices
+        var address = AudioObjectPropertyAddress(mSelector: selector,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            Task { @MainActor [weak self] in await self?.inspectSources() }
+        }
+        if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
+                                               DispatchQueue.main, listener) == noErr {
+            deviceListeners.append((selector, listener))
         }
     }
 
@@ -699,15 +692,24 @@ public final class AudioCaptureController {
     }
 
     private func scheduleMicrophoneRecovery() {
-        guard worker != nil, !desiredMicrophoneMuted, !microphoneRecoveryRequiresSelection, !stopRequested,
-              microphoneRecoveryTask == nil else { return }
+        guard worker != nil, !desiredMicrophoneMuted, !microphoneRecoveryRequiresSelection, !stopRequested else { return }
+        microphoneRecoveryEarliest = .now.advanced(by: Self.microphoneRecoveryDebounce)
+        guard microphoneRecoveryTask == nil else { return }
         microphoneRecoveryTask = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .milliseconds(200)) } catch { break }
-                guard !Task.isCancelled, let self else { break }
+                guard let self else { break }
+                if let earliest = self.microphoneRecoveryEarliest {
+                    let remaining = earliest - ContinuousClock.now
+                    if remaining > .zero {
+                        do { try await Task.sleep(for: remaining) } catch { break }
+                        continue
+                    }
+                }
                 if await self.recoverMicrophoneRoute() { break }
+                do { try await Task.sleep(for: .milliseconds(200)) } catch { break }
             }
             self?.microphoneRecoveryTask = nil
+            self?.microphoneRecoveryEarliest = nil
         }
     }
 
@@ -721,7 +723,7 @@ public final class AudioCaptureController {
         if microphoneRecoveryAttempts.count >= 3 {
             microphoneRecoveryRequiresSelection = true
             try? await applyMicrophoneMute(true, reason: "Selected microphone route changed repeatedly; choose an input to continue capturing your voice")
-            onEvent?(.trackChanged(.microphone, "\(selectedMicrophone.name) could not be restarted after three attempts. Meeting audio continues; choose an input in Inputs."))
+            onEvent?(.trackChanged(.microphone, "\(selectedMicrophone.name) could not be restarted after three attempts. Choose an input in Inputs to restore microphone capture."))
             return true
         }
         microphoneRecoveryAttempts.append(now)
@@ -730,7 +732,7 @@ public final class AudioCaptureController {
             onEvent?(.trackChanged(.microphone, "\(selectedMicrophone.name) changed audio format or route. Microphone capture restarted."))
             return true
         } catch {
-            onEvent?(.trackChanged(.microphone, "\(selectedMicrophone.name) could not be restarted: \(error.localizedDescription). Meeting audio continues; choose an input in Inputs."))
+            onEvent?(.trackChanged(.microphone, "\(selectedMicrophone.name) could not be restarted: \(error.localizedDescription). Choose an input in Inputs to restore microphone capture."))
             return false
         }
     }
@@ -779,6 +781,20 @@ public final class AudioCaptureController {
         let remaining = values.volumeAvailableCapacityForImportantUsage ?? Int64(values.volumeAvailableCapacity ?? 0)
         if remaining < 3_000_000_000 { onEvent?(.lowDisk(remaining)) }
         if remaining < 1_000_000_000 { throw CaptureError.diskFull }
+    }
+
+    /// Check-and-enqueue under one MainActor turn so finishTransition cannot
+    /// drain between the predicate and the waiter registration.
+    private func waitWhileTransitioning() async {
+        while transitioning {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                if transitioning {
+                    transitionWaiters.append(continuation)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     private func finishTransition() {

@@ -11,7 +11,7 @@ struct TranscriptTextView: NSViewRepresentable {
     var highlight: (NSRange) -> Void
     var selectionChanged: (NSRange) -> Void
     func makeNSView(context: Context) -> PassageTextView {
-        let view = PassageTextView()
+        let view = PassageTextView(usingTextLayoutManager: false)
         view.isEditable = false; view.isSelectable = true; view.drawsBackground = false
         view.textContainerInset = .zero; view.textContainer?.lineFragmentPadding = 0
         view.isHorizontallyResizable = false; view.isVerticallyResizable = true
@@ -63,9 +63,16 @@ struct TranscriptTextView: NSViewRepresentable {
         view.selectedRanges = selection.filter { NSMaxRange($0.rangeValue) <= text.length }
         view.invalidateIntrinsicContentSize()
     }
+    /// SwiftUI probes several widths per layout pass. Measuring on the live
+    /// container would leave the visible text wrapped at the last probed width.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: PassageTextView, context: Context) -> CGSize? {
-        guard let width = proposal.width, let container = nsView.textContainer, let layout = nsView.layoutManager else { return nil }
-        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        let storage = NSTextStorage(attributedString: nsView.attributedString())
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        let layout = NSLayoutManager()
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
         layout.ensureLayout(for: container)
         return CGSize(width: width, height: max(20, ceil(layout.usedRect(for: container).height)))
     }
